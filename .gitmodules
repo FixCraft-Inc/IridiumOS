@@ -1,18 +1,18 @@
 [submodule "v86"]
 	path = v86
-	url = https://github.com/MercuryWorkshop/v86
+	url = https://github.com/FixCraft-Inc/v86.git
 [submodule "aboutproxy"]
 	path = aboutproxy
-	url = https://github.com/MercuryWorkshop/aboutproxy
+	url = https://github.com/FixCraft-Inc/aboutproxy.git
 [submodule "dreamlandjs"]
 	path = dreamlandjs
-	url = https://github.com/mercuryworkshop/dreamlandjs
+	url = https://github.com/FixCraft-Inc/dreamlandjs.git
 [submodule "chimerix"]
 	path = chimerix
-	url = https://github.com/MercuryWorkshop/chimerix.git
+	url = https://github.com/FixCraft-Inc/chimerix.git
 [submodule "native-file-system-adapter"]
 	path = native-file-system-adapter
-	url = https://github.com/MercuryWorkshop/native-file-system-adapter/
+	url = https://github.com/FixCraft-Inc/native-file-system-adapter.git
 [submodule "x86_image_wizard/epoxy"]
 	path = x86_image_wizard/epoxy
-	url = https://github.com/MercuryWorkshop/epoxy-tls
+	url = https://github.com/FixCraft-Inc/epoxy-tls.git
