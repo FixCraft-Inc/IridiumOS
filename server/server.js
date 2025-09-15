@@ -65,81 +65,96 @@ if (DEBUG_APP_FOLDER) {
 }
 
 // --- GTM injection middleware ---
-// Buffer responses and inject GTM for HTML responses (safe for sendFile/streams)
+// Only intercept requests that should return HTML (by path),
+// so JS/CSS/etc are never buffered or modified.
+function looksLikeHtmlRequest(req) {
+  const urlPath = req.path || req.url || "/";
+  const ext = path.extname(urlPath).toLowerCase();
+  if (!ext) return true; // directories like "/" or "/app" resolve to index.html
+  return ext === ".html" || ext === ".xhtml" || ext === ".htm";
+}
+
 app.use((req, res, next) => {
-  // skip injection for non-GET/HEAD
-  if (!["GET", "HEAD"].includes(req.method)) return next();
+  // Skip non-GET/HEAD and any request that doesn't look like HTML by URL
+  if (!(["GET", "HEAD"].includes(req.method) && looksLikeHtmlRequest(req))) {
+    return next();
+  }
 
   const origWrite = res.write.bind(res);
   const origEnd = res.end.bind(res);
+  const origSetHeader = res.setHeader.bind(res);
+  const origWriteHead = res.writeHead.bind(res);
+
   let chunks = [];
   let isHtml = false;
-  let headersSent = false;
 
-  // Intercept header writes to detect Content-Type early if possible
-  const origSetHeader = res.setHeader.bind(res);
+  // Track Content-Type as soon as it is set
   res.setHeader = (name, value) => {
-    if (String(name).toLowerCase() === "content-type" && /html/i.test(String(value))) {
+    if (String(name).toLowerCase() === "content-type" && /text\/(html|xhtml)/i.test(String(value))) {
       isHtml = true;
     }
     return origSetHeader(name, value);
   };
 
-  res.write = function (chunk, ...args) {
-    // If headers already indicate non-html and were sent, passthrough
-    if (headersSent && !isHtml) {
-      return origWrite(chunk, ...args);
+  res.writeHead = (statusCode, statusMessage, headers) => {
+    // normalize parameters
+    if (typeof statusMessage === "object" && statusMessage !== null) {
+      headers = statusMessage; // statusMessage omitted
     }
-    // buffer everything until end
+    if (headers && headers["Content-Type"]) {
+      const v = headers["Content-Type"].toString();
+      if (/text\/(html|xhtml)/i.test(v)) isHtml = true;
+    }
+    return origWriteHead(statusCode, statusMessage, headers);
+  };
+
+  res.write = function (chunk, ...args) {
+    // Buffer only if it is (or will be) HTML. Otherwise passthrough.
+    const ct = (res.getHeader("Content-Type") || "").toString();
+    const contentIsHtml = isHtml || /text\/(html|xhtml)/i.test(ct);
+    if (!contentIsHtml) return origWrite(chunk, ...args);
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
     return true;
   };
 
   res.end = function (chunk, ...args) {
-    if (chunk) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
-
-    // Determine if HTML by headers or by content sniffing
+    // If we never determined it to be HTML, or URL wasn't HTML, passthrough fast
     const ct = (res.getHeader("Content-Type") || "").toString();
-    if (/html/i.test(ct)) isHtml = true;
+    const contentIsHtml = isHtml || /text\/(html|xhtml)/i.test(ct);
 
-    const bodyBuf = Buffer.concat(chunks || []);
-    let body = bodyBuf.toString("utf8");
-
-    // Heuristics: treat as HTML if contains <html> or <body> or </head> etc.
-    if (!isHtml && (/<\/html>|<html|<body|<!doctype html/i.test(body))) {
-      isHtml = true;
+    if (!contentIsHtml) {
+      return origEnd(chunk, ...args);
     }
 
-    if (isHtml && body.length > 0 && !/GTM-K6227GPN/.test(body)) {
+    if (chunk) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+
+    const bodyBuf = Buffer.concat(chunks);
+    let body = bodyBuf.toString("utf8");
+
+    if (body.length > 0 && !/GTM-K6227GPN/.test(body)) {
       // Inject GTM into <head> (as high as possible) and noscript right after <body>
       if (/<head[^>]*>/i.test(body)) {
-        body = body.replace(/<head[^>]*>/i, match => match + "\n" + gtmHead);
+        body = body.replace(/<head[^>]*>/i, (m) => m + "\n" + gtmHead);
       } else if (/<html[^>]*>/i.test(body)) {
-        // no head tag — create one after <html>
-        body = body.replace(/<html[^>]*>/i, match => match + "\n<head>\n" + gtmHead + "\n</head>");
+        body = body.replace(/<html[^>]*>/i, (m) => m + "\n<head>\n" + gtmHead + "\n</head>");
       } else {
-        // fallback: prepend
         body = gtmHead + "\n" + body;
       }
 
       if (/<body[^>]*>/i.test(body)) {
-        body = body.replace(/<body[^>]*>/i, match => match + "\n" + gtmNoScript);
+        body = body.replace(/<body[^>]*>/i, (m) => m + "\n" + gtmNoScript);
       } else {
-        // fallback: put noscript at top
         body = gtmNoScript + "\n" + body;
       }
     }
 
-    // update Content-Length if set
     if (res.getHeader("Content-Length")) {
       res.setHeader("Content-Length", Buffer.byteLength(body));
     }
 
-    // send modified body
     return origEnd(body, ...args);
   };
 
-  // allow other middlewares to run
   next();
 });
 
