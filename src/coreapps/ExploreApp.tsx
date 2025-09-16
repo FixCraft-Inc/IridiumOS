@@ -115,6 +115,45 @@ class ExploreApp extends App {
 			}
 		}
 
+		/* Extra polish for FixCraft section */
+		.badges {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 0.5rem;
+			margin: 0.5rem 0 1rem;
+		}
+		.badge {
+			display: inline-flex;
+			align-items: center;
+			gap: 0.35rem;
+			border-radius: 999px;
+			padding: 0.25rem 0.6rem;
+			background: color-mix(
+				in srgb,
+				var(--theme-accent) 18%,
+				var(--theme-secondary-bg)
+			);
+			color: color-mix(in srgb, var(--theme-fg) 85%, var(--theme-accent));
+			font-weight: 600;
+			font-size: 0.9rem;
+		}
+		.badge .material-symbols-outlined {
+			font-size: 1rem;
+			line-height: 1;
+		}
+
+		.callout {
+			background: var(--theme-secondary-bg);
+			border-left: 4px solid var(--theme-accent);
+			padding: 0.75rem 1rem;
+			border-radius: 0.5rem;
+			margin: 1rem 0;
+		}
+		.muted {
+			opacity: 0.8;
+			font-size: 0.95rem;
+		}
+
 		::-webkit-scrollbar {
 			width: 8px;
 		}
@@ -171,6 +210,79 @@ class ExploreApp extends App {
 			<ul>
 				<li>Added WebDAV endpoint at /dav/*</li>
 				<li>Fix UI bugs in the file picker</li>
+			</ul>
+		</div>
+	);
+
+	/* NEW: FixCraft & Network section */
+	fxcraft = (
+		<div id="body">
+			<h1>FixCraft Edge &amp; Security</h1>
+			<div class="badges">
+				<span class="badge">
+					<span class="material-symbols-outlined">vpn_lock</span>
+					Always-On VPN
+				</span>
+				<span class="badge">
+					<span class="material-symbols-outlined">shield_lock</span>
+					Cloudflare WAF
+				</span>
+				<span class="badge">
+					<span class="material-symbols-outlined">language</span>
+					Multi-domain Rehost
+				</span>
+			</div>
+
+			<h2>Embedded, admin-managed VPN (unchangeable)</h2>
+			<p>
+				This build includes an OS-level, always-on VPN gateway managed by the
+				administrator. It cannot be disabled or modified by users. All outbound
+				traffic is forced through the VPN to protect origin IP and enforce
+				network policy.
+			</p>
+			<div class="callout">
+				<strong>Managed setting:</strong> Network/VPN controls are read-only for
+				non-admin users.{" "}
+				<a href="javascript:anura.apps['anura.settings'].open();">
+					Open Settings
+				</a>
+			</div>
+
+			<h2>Cloudflare-protected edge</h2>
+			<p>
+				All public endpoints sit behind Cloudflare (orange-cloud proxy) with
+				<strong> Full (strict) SSL</strong>, DDoS mitigation, and WAF rules.
+				This prevents direct exposure of the origin server and adds an extra
+				security layer.{" "}
+				<a href="javascript:anura.apps['anura.browser'].open(['https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/full-strict/']);">
+					Learn about Full (strict)
+				</a>
+				.
+			</p>
+
+			<h2>Rehosting on request</h2>
+			<p>
+				Need access under your organization’s domain? We support whitelabeled
+				rehosts across multiple domains (e.g., <code>fixcraft.jp</code>,
+				<code> *.it.com</code>, etc.). Requests require proof of organization
+				block/need and administrator approval.
+			</p>
+			<p class="muted">
+				Submit a request:{" "}
+				<a href="javascript:anura.apps['anura.browser'].open(['https://fixcraft.org/rehost']);">
+					fixcraft.org/rehost
+				</a>{" "}
+				(or contact your FixCraft admin).
+			</p>
+
+			<h2>At a glance</h2>
+			<ul>
+				<li>
+					Origin IP never exposed to end-users; all traffic goes via VPN →
+					Cloudflare.
+				</li>
+				<li>VPN policy is enforced by OS; user-side toggles are disabled.</li>
+				<li>Custom rehost domains available upon verified request.</li>
 			</ul>
 		</div>
 	);
@@ -319,6 +431,15 @@ class ExploreApp extends App {
 				>
 					<span class="material-symbols-outlined">memory</span>
 					x86 Subsystem
+				</div>
+				<div
+					on:click={() => {
+						this.state.screen = this.fxcraft;
+					}}
+					class:selected={use(this.state.screen, (sc) => sc === this.fxcraft)}
+				>
+					<span class="material-symbols-outlined">shield_lock</span>
+					FixCraft Edge
 				</div>
 			</div>
 			<article>{use(this.state.screen)}</article>

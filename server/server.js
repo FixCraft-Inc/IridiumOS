@@ -143,25 +143,30 @@ app.use((req, res, next) => {
     let body = bodyBuf.toString("utf8");
 
     if (body.length > 0 && !/GTM-K6227GPN/.test(body)) {
-      // Inject only when we find real HTML structure. Never prepend blindly.
-      let injected = false;
+      // Consider it real HTML only if it has <!doctype html>
+      // and either <html> or <body> in the first few KB.
+      const sniff = body.slice(0, 8192);
+      const hasDoctype = /<!doctype\s+html/i.test(sniff);
+      const hasHtmlTag = /<html\b[^>]*>/i.test(sniff);
+      const hasBodyTag = /<body\b[^>]*>/i.test(sniff);
+      const isRealHtml = hasDoctype && (hasHtmlTag || hasBodyTag);
 
-      if (/<head[^>]*>/i.test(body)) {
-        body = body.replace(/<head[^>]*>/i, (m) => m + "\n" + gtmHead);
-        injected = true;
-      } else if (/<html[^>]*>/i.test(body)) {
-        body = body.replace(/<html[^>]*>/i, (m) => m + "\n<head>\n" + gtmHead + "\n</head>");
-        injected = true;
-      }
+      if (isRealHtml) {
+        // Inject only when we find real HTML structure. Never prepend blindly.
+        let injected = false;
 
-      if (/<body[^>]*>/i.test(body)) {
-        body = body.replace(/<body[^>]*>/i, (m) => m + "\n" + gtmNoScript);
-        injected = true;
-      }
+        if (/<head[^>]*>/i.test(body)) {
+          body = body.replace(/<head[^>]*>/i, (m) => m + "\n" + gtmHead);
+          injected = true;
+        } else if (/<html[^>]*>/i.test(body)) {
+          body = body.replace(/<html[^>]*>/i, (m) => m + "\n<head>\n" + gtmHead + "\n</head>");
+          injected = true;
+        }
 
-      // If no HTML tags were found, leave body unchanged (safety for JS/CSS/etc)
-      if (!injected) {
-        // do nothing
+        if (/<body[^>]*>/i.test(body)) {
+          body = body.replace(/<body[^>]*>/i, (m) => m + "\n" + gtmNoScript);
+          injected = true;
+        }
       }
     }
 

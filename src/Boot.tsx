@@ -42,7 +42,7 @@ channel.addEventListener("message", (msg) => {
             <body>
             <div id="wrapper">
             <h1>AnuraOS is already running in another tab</h1>
-            <p>Please close the other tab and reload.</p>
+            <p>Please close the other tab and reload, lol.</p>
             </div>
             </body>
             </html>
@@ -272,9 +272,9 @@ window.addEventListener("load", async () => {
 
 		if (needsMigration.length > 0) {
 			anura.notifications.add({
-				title: "Anura Update",
+				title: "Iridium Update",
 				description:
-					"AnuraOS has been updated to a new version. Users are recommended to change the installation directory of their apps and libraries to /usr/ to ensure consistency with new installations.",
+					"Yo!! its time for and update!, IridiumOS has been updated to a new version. Users are recommended to change the installation directory of their apps and libraries to /usr/ to ensure consistency with new installations.",
 				timeout: "never",
 				buttons: [
 					{
