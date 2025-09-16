@@ -68,10 +68,21 @@ if (DEBUG_APP_FOLDER) {
 // Only intercept requests that should return HTML (by path),
 // so JS/CSS/etc are never buffered or modified.
 function looksLikeHtmlRequest(req) {
-  const urlPath = req.path || req.url || "/";
-  const ext = path.extname(urlPath).toLowerCase();
-  if (!ext) return true; // directories like "/" or "/app" resolve to index.html
-  return ext === ".html" || ext === ".xhtml" || ext === ".htm";
+  // Use pathname only (ignore query/hash) to compute extension
+  let pathname = "/";
+  try {
+    const u = new URL(req.url, "http://local");
+    pathname = u.pathname || "/";
+  } catch {
+    pathname = (req.path || req.url || "/").split("?")[0];
+  }
+
+  const ext = path.extname(pathname).toLowerCase();
+  if (ext) return ext === ".html" || ext === ".xhtml" || ext === ".htm";
+
+  // No extension: only treat as HTML for navigations (Accept: text/html) or directory-like paths
+  const accept = String(req.headers?.accept || "").toLowerCase();
+  return pathname.endsWith("/") || accept.includes("text/html");
 }
 
 app.use((req, res, next) => {
@@ -132,19 +143,25 @@ app.use((req, res, next) => {
     let body = bodyBuf.toString("utf8");
 
     if (body.length > 0 && !/GTM-K6227GPN/.test(body)) {
-      // Inject GTM into <head> (as high as possible) and noscript right after <body>
+      // Inject only when we find real HTML structure. Never prepend blindly.
+      let injected = false;
+
       if (/<head[^>]*>/i.test(body)) {
         body = body.replace(/<head[^>]*>/i, (m) => m + "\n" + gtmHead);
+        injected = true;
       } else if (/<html[^>]*>/i.test(body)) {
         body = body.replace(/<html[^>]*>/i, (m) => m + "\n<head>\n" + gtmHead + "\n</head>");
-      } else {
-        body = gtmHead + "\n" + body;
+        injected = true;
       }
 
       if (/<body[^>]*>/i.test(body)) {
         body = body.replace(/<body[^>]*>/i, (m) => m + "\n" + gtmNoScript);
-      } else {
-        body = gtmNoScript + "\n" + body;
+        injected = true;
+      }
+
+      // If no HTML tags were found, leave body unchanged (safety for JS/CSS/etc)
+      if (!injected) {
+        // do nothing
       }
     }
 
