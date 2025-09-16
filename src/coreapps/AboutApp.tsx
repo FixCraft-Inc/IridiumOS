@@ -133,8 +133,8 @@ class AboutApp extends App {
 
 		const aboutview = anura.wm.create(this, {
 			title: "",
-			width: "650px",
-			height: fullscreenEasterEgg ? "700px" : "750px",
+			width: "580px",
+			height: fullscreenEasterEgg ? "560px" : "600px",
 			resizable: false,
 		});
 
