@@ -13,8 +13,8 @@ const REDIRECT_PORT = process.env.REDIRECT_PORT ? Number(process.env.REDIRECT_PO
 
 // === TLS files (assumed names) ===
 // If your cert/key filenames differ, change these two paths:
-const TLS_CERT = "/home/f1xgod/fullchain.pem";
-const TLS_KEY  = "/home/f1xgod/privkey.pem";
+const TLS_CERT = "/home/f1xgod/cloudf.pem";
+const TLS_KEY  = "/home/f1xgod/cloudf.key";
 
 const gtmHead = `<!-- Google Tag Manager -->
 <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
