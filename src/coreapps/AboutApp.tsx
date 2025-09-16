@@ -8,22 +8,20 @@ class AboutApp extends App {
 			<div class="aboutapp-logo">
 				<div
 					class="aboutapp-logo-img"
-					title="Look what you've done"
+					title="About AnuraOS"
 					on:click={() => {
-						anura.apps["anura.browser"].open([
-							"https://www.youtube.com/watch?v=34Na4j8AVgA",
-						]);
+						alert("Why?");
 					}}
 				></div>
 			</div>
 			<div class="aboutapp-logo-divider"></div>
 			<div class="aboutapp-content">
-				<p>AnuraOS</p>
-				<p>
-					Version {anura.version.codename} ({anura.version.pretty}) (OS build{" "}
-					{this.getOSBuild()})
+				<p class="aboutapp-title">AnuraOS (FXC)</p>
+				<p class="aboutapp-version">
+					Version {anura.version.pretty} ({anura.version.codename}) — OS build:
+					Iridium Edition™ <code>{this.getOSBuild()}</code>
 				</p>
-				<p>© Mercury Workshop. All rights reserved.</p>
+				<p>© FixCraft Inc. All rights reserved. (Credits: Mercury Workshop)</p>
 				<br />
 				{$if(
 					anura.settings.get("x86-disabled"),
@@ -35,7 +33,7 @@ class AboutApp extends App {
 							}}
 							class="aboutapp-link-button"
 						>
-							settings
+							Settings
 						</button>
 						.
 					</p>,
@@ -65,8 +63,33 @@ class AboutApp extends App {
 					>
 						GNU AGPLv3
 					</button>
-					.
+					. This is a fork of AnuraOS.
 				</p>
+				<br />
+				<p class="aboutapp-motto">
+					FixCraft Inc. ® — software development company and mass rehost
+					provider.
+					<br />
+					“Break the rules or the rules will break you.” — F1.
+				</p>
+				<br />
+				<div class="aboutapp-actions">
+					<button
+						class="aboutapp-secondary-button"
+						on:click={async () => {
+							const diag = `AnuraOS ${anura.version.pretty} (${anura.version.codename}) | Iridium Edition ${this.getOSBuild()}
+	x86: ${anura.settings.get("x86-disabled") ? "disabled" : "enabled"} | OPFS: ${anura.settings.get("bootFromOPFS") ? "on" : "off"}`;
+							try {
+								await navigator.clipboard.writeText(diag);
+								alert("Diagnostics copied.");
+							} catch {
+								alert("Copy failed.");
+							}
+						}}
+					>
+						Copy diagnostics
+					</button>
+				</div>
 			</div>
 		</div>
 	);
@@ -110,8 +133,8 @@ class AboutApp extends App {
 
 		const aboutview = anura.wm.create(this, {
 			title: "",
-			width: "400px",
-			height: fullscreenEasterEgg ? "400px" : "450px",
+			width: "650px",
+			height: fullscreenEasterEgg ? "700px" : "750px",
 			resizable: false,
 		});
 

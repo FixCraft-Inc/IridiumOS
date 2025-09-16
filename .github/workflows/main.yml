@@ -1,0 +1,121 @@
+name: CI
+
+on: [push, pull_request, workflow_dispatch]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  version-check:
+    runs-on: ubuntu-latest
+    outputs:
+      version_changed: ${{ steps.check.outputs.version_changed }}
+      new_version: ${{ steps.check.outputs.new_version }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - id: check
+        run: |
+          CURRENT_VERSION=$(jq -r .version package.json)
+          LATEST_VERSION=$(npm view @mercuryworkshop/anuraos-types versions --json | jq -r '.[-1]' || echo "0.0.0")
+
+          if [ "$LATEST_VERSION" != "$CURRENT_VERSION" ]; then
+            echo "version_changed=true" >> $GITHUB_OUTPUT
+            echo "new_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          else
+            echo "version_changed=false" >> $GITHUB_OUTPUT
+          fi
+
+  build:
+    runs-on: ubuntu-latest
+    needs: version-check
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y git build-essential clang default-jre
+
+      - name: Build static bundle
+        run: make static
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anura-static
+          path: static/*
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: anura-types
+          path: anuraos-types/*
+          retention-days: 30
+
+  upload:
+    runs-on: ubuntu-latest
+    needs: [version-check, build]
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: write   # needed to push release assets
+    steps:
+      - name: Get artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: anura-static
+          path: ./static
+
+      - name: Zip release
+        run: cd static && zip -r ../anura.zip . && cd ..
+
+      - name: Release unstable build
+        uses: ncipollo/release-action@v1
+        with:
+          name: Continuous Build
+          tag: latest
+          commit: main
+          body: "${{ github.event.head_commit.url }} ${{ github.event.head_commit.message }}"
+          artifacts: "anura.zip"
+          prerelease: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Release tagged version
+        if: needs.version-check.outputs.version_changed == 'true'
+        uses: ncipollo/release-action@v1
+        with:
+          name: "${{ needs.version-check.outputs.new_version }}"
+          tag: "v${{ needs.version-check.outputs.new_version }}"
+          commit: main
+          body: "${{ github.event.head_commit.url }} ${{ github.event.head_commit.message }}"
+          artifacts: "anura.zip"
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  pages:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: anura-static
+          path: ./static
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: "./static"
+      - uses: actions/deploy-pages@v4
