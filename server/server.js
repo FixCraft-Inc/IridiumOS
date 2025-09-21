@@ -31,18 +31,37 @@ height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
 
 const app = express();
 
-// Security-ish headers used previously
+const ISOLATED_PATTERNS = [
+  /\.wasm$/i,
+  /^\/(v86|emu|os)\b/i,     // html/статик эмулятора
+  /^\/bin\b/i,
+  /^\/apps\b/i,
+  /^\/build\b/i,
+];
+
+function needsIsolation(req) {
+  const u = new URL(req.url, "http://x");
+  const p = u.pathname || "/";
+  return ISOLATED_PATTERNS.some(rx => rx.test(p));
+}
+
 app.use((req, res, next) => {
-  res.header("Cross-Origin-Embedder-Policy", "require-corp");
-  res.header("Access-Control-Allow-Origin", "*");
-  res.header("Cross-Origin-Opener-Policy", "same-origin");
-  res.header("Cross-Origin-Resource-Policy", "same-site");
+  if (needsIsolation(req)) {
+    res.setHeader("Cross-Origin-Embedder-Policy", "require-corp");
+    res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
+    res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+  } else {
+    // никаких COEP/COOP на обычных страницах — GTM живёт
+    ["Cross-Origin-Embedder-Policy","Cross-Origin-Opener-Policy","Cross-Origin-Resource-Policy"]
+      .forEach(h => res.removeHeader?.(h));
+  }
   next();
 });
 
 // If debug app folder provided, patch /config.json and serve debug app
 if (DEBUG_APP_FOLDER) {
   app.use((req, res, next) => {
+    if (needsIsolation(req)) return next();
     if (req.path === "/config.json") {
       const configPath = path.join(__dirname, "public", "config.json");
       fs.readFile(configPath, "utf8", (err, data) => {
@@ -57,7 +76,13 @@ if (DEBUG_APP_FOLDER) {
       });
     } else next();
   });
-
+app.use((req, res, next) => {
+  if (req.path.endsWith(".wasm")) res.type("application/wasm");
+  if (req.path === "/service-worker.js" || req.path === "/anura-sw.js") {
+    res.setHeader("Cache-Control", "no-store");
+  }
+  next();
+});
   app.use(
     "/apps/anura-devserver-debug",
     express.static(path.resolve(DEBUG_APP_FOLDER))
