@@ -2,8 +2,8 @@
   "users": [
     {
       "username": "admin",
-      "salt": "5583967c8a66603cd6c7af35bc2e08b6",
-      "passwordHash": "85bd8a16353d4197fc63c04b396f264935d808d1f2aefad7f2dd00d29e3fa22b97156933407af407789420edf82143cab3886b3da9c43cdd4c53aee24a75e706"
+      "salt": "4b87aebefcf8676db20669d027be7d5d",
+      "passwordHash": "b7720bbea11da34aa24dec4186ad8bf2e1ba87d2ae7f710081ff3c02e62ee2f3a830bf9f83d0f24a8ab54126e95dca5014d3365cde6ab79b8e59033d187c82ff"
     }
   ]
 }
