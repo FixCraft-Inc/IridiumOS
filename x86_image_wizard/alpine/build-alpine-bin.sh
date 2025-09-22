@@ -42,6 +42,69 @@ sudo tar -xf "$OUT_ROOTFS_TAR" -C "$OUT_ROOTFS_MNT"
 sudo rm -f "$OUT_ROOTFS_MNT/.dockerenv"
 sudo cp resolv.conf "$OUT_ROOTFS_MNT/etc/resolv.conf"
 sudo cp hostname "$OUT_ROOTFS_MNT/etc/hostname"
+#BETA
+# --- Iridium branding for Alpine/v86 ---
+# POSIX sh, idempotent, keeps apk happy.
+
+: "${ROOT:=${OUT_ROOTFS_MNT:?set OUT_ROOTFS_MNT}}"
+: "${IR_NAME:=IridiumOS}"
+: "${IR_VERSION:=12.6}"
+: "${IR_CODENAME:=tokyo}"
+: "${IR_PRETTY:=Iridium WebLinux ${IR_VERSION} (Tokyo)}"
+
+SUDO=""; [ "$(id -u)" -ne 0 ] && SUDO="sudo"
+
+# Detect Alpine version for reference (do NOT modify this file)
+ALPINE_VER=""
+[ -f "$ROOT/etc/alpine-release" ] && ALPINE_VER="$($SUDO cat "$ROOT/etc/alpine-release" 2>/dev/null || true)"
+
+# Dirs
+$SUDO install -d "$ROOT/etc" "$ROOT/usr/lib" "$ROOT/usr/local/bin" "$ROOT/usr/bin" "$ROOT/etc/profile.d"
+
+# neofetch + alias
+$SUDO install -Dm0755 neofetch "$ROOT/usr/local/bin/neofetch"
+$SUDO ln -sfn ../local/bin/neofetch "$ROOT/usr/bin/neofetch"
+printf 'alias sysinfo="neofetch"\n' | $SUDO tee "$ROOT/etc/profile.d/20-sysinfo.sh" >/dev/null
+
+# One-time backup
+if [ -f "$ROOT/etc/os-release" ] && [ ! -f "$ROOT/etc/os-release.orig" ]; then
+  $SUDO cp -a "$ROOT/etc/os-release" "$ROOT/etc/os-release.orig"
+fi
+
+# /etc/os-release (branding only; lineage = alpine)
+$SUDO tee "$ROOT/etc/os-release" >/dev/null <<EOF
+NAME="${IR_NAME}"
+PRETTY_NAME="${IR_PRETTY}"
+VERSION_ID="${IR_VERSION}"
+VERSION="${IR_VERSION} (Tokyo)"
+VERSION_CODENAME="${IR_CODENAME}"
+ID="iridium"
+ID_LIKE="alpine"
+HOME_URL="https://fixcraft.org/iridium"
+SUPPORT_URL="https://fixcraft.org/support"
+BUG_REPORT_URL="https://fixcraft.org/issues"
+# Base: Alpine ${ALPINE_VER}
+EOF
+
+# Ensure discovery path exists
+$SUDO rm -f "$ROOT/usr/lib/os-release"
+$SUDO ln -s /etc/os-release "$ROOT/usr/lib/os-release"
+
+# (Optional) lsb_release compat (Alpine обычно без lsb_release, но пусть будет)
+$SUDO tee "$ROOT/etc/lsb-release" >/dev/null <<'EOF'
+DISTRIB_ID=IridiumOS
+DISTRIB_RELEASE=12.6
+DISTRIB_CODENAME=tokyo
+DISTRIB_DESCRIPTION="Iridium WebLinux 12.6 (Tokyo)"
+EOF
+
+# Marker for your get_distro() fast-path
+printf 'Iridium WebLinux 12.6 (Tokyo)\n' | $SUDO tee "$ROOT/etc/iridium-release" >/dev/null
+
+# Eye-candy
+printf 'Iridium WebLinux 12.6 (Tokyo) \\n \\l\n' | $SUDO tee "$ROOT/etc/issue" >/dev/null
+printf 'Welcome to Iridium WebLinux (Tokyo) — stay shiny, stay fast.\n' | $SUDO tee "$ROOT/etc/motd" >/dev/null
+# --- end Iridium branding ---
 
 sudo cp -r "$OUT_ROOTFS_MNT/boot" "$IMAGES/alpine-boot"
 sudo umount "$loop"
