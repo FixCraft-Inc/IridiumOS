@@ -32,7 +32,7 @@ window.saved = $state({
 	repos: Object.entries(
 		(await persistence.get("repos")) || {
 			"Iridium Apps Repository":
-				"https://raw.githubusercontent.com/F1xGOD/iridium-repo/master/",
+				"https://raw.githubusercontent.com/F1xGOD/iridium-repo/main/",
 			"Anura App Repository":
 				"https://raw.githubusercontent.com/MercuryWorkshop/anura-repo/master/",
 			"Anura Developer Repository":

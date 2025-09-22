@@ -149,9 +149,18 @@ prompt_password() {
   local first="" second=""
   while true; do
     read -srp "Password: " first
-    echo
+    echo >&2
     read -srp "Confirm password: " second
-    echo
+    echo >&2
+    local raw_first="$first"
+    local raw_second="$second"
+    first="${first//$'\r'/}"
+    first="${first//$'\n'/}"
+    second="${second//$'\r'/}"
+    second="${second//$'\n'/}"
+    if [ "$raw_first" != "$first" ] || [ "$raw_second" != "$second" ]; then
+      echo "Note: newline characters were removed from the password." >&2
+    fi
     if [ -z "$first" ]; then
       echo "Password cannot be empty." >&2
       continue
