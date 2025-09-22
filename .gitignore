@@ -23,6 +23,7 @@ public/dist.js
 v86timestamp
 Notes
 server/passkey
+server/.env
 .direnv
 result
 anuraos-types/
