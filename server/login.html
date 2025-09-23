@@ -62,6 +62,8 @@
     .btn:hover{ transform:translateY(-1px) }
     .btn[disabled]{ opacity:.6; filter:saturate(.6); cursor:not-allowed; box-shadow:none; }
     .muted{margin-top:12px; font-size:12px; color:var(--muted); text-align:center}
+    .perm-required{margin-top:12px; font-size:12px; color:#fbbf24; text-align:center; display:none;}
+    .perm-required.show{display:block; color:#f97316;}
     .bg-split{ position:fixed; inset:0; z-index:-1; display:none; background:#000; pointer-events:none; overflow:hidden; contain:strict; }
     .bg-split.active{ display:block }
     .bg-split::after{ content:""; position:absolute; inset:0; background:var(--dim) }
@@ -101,6 +103,7 @@
     <!-- Visible Turnstile mount -->
     <div id="cfBox"></div>
     <div id="cfMsg">Please verify you are human.</div>
+    <div id="permMsg" class="perm-required"></div>
     <div id="loginError"></div>
 
     <input type="hidden" id="nextField" name="next">
@@ -109,16 +112,72 @@
     <div class="muted">Access only to trusted members, unauthorized access is a felony!</div>
   </form>
 
+  <script src="/permission-guard.js"></script>
   <script>
     // Enable button when both fields non-empty
     const u=document.getElementById('u'), p=document.getElementById('p'), btn=document.getElementById('loginBtnn');
     const form=document.getElementById('loginForm'), msg=document.getElementById('cfMsg');
     const errBox=document.getElementById('loginError');
-    const enable=()=>{ btn.disabled = !(u.value.trim() && p.value.trim()); };
-    u.addEventListener('input', enable); p.addEventListener('input', enable); enable();
+    const permMsg=document.getElementById('permMsg');
+    let permissionsReady=false;
+    let latestPermissionIssues=['notifications','geolocation'];
+
     const clearError = () => { if (errBox) errBox.classList.remove('show'); };
-    u.addEventListener('input', clearError);
-    p.addEventListener('input', clearError);
+
+    const formatIssueSummary = (issues) => {
+      if (!Array.isArray(issues) || !issues.length) return 'notifications and location';
+      const labelMap={
+        'notifications':'notifications',
+        'geolocation':'location access',
+        'dark-mode':'dark mode',
+      };
+      const parts=issues.map((code)=>labelMap[code]).filter(Boolean);
+      if (!parts.length) return 'notifications and location';
+      if (parts.length===1) return parts[0];
+      if (parts.length===2) return parts[0]+' and '+parts[1];
+      return parts.slice(0,-1).join(', ')+', and '+parts[parts.length-1];
+    };
+
+    const updatePermissionMessage = () => {
+      if (!permMsg) return;
+      if (!permissionsReady) {
+        permMsg.textContent='Please enable '+formatIssueSummary(latestPermissionIssues)+' to sign in.';
+        permMsg.classList.add('show');
+      } else {
+        permMsg.classList.remove('show');
+      }
+    };
+
+    const updateSubmitState = () => {
+      const fieldsReady=Boolean(u.value.trim() && p.value.trim());
+      const allow=fieldsReady && permissionsReady;
+      btn.disabled = !allow;
+      updatePermissionMessage();
+    };
+
+    const handleInput = () => {
+      clearError();
+      updateSubmitState();
+    };
+
+    u.addEventListener('input', handleInput);
+    p.addEventListener('input', handleInput);
+    updateSubmitState();
+
+    if (window.PermissionGuard) {
+      window.PermissionGuard.start({
+        requireDarkMode: true,
+        requireNotifications: true,
+        requireGeolocation: true,
+        onStatusChange: ({ allGranted, issues }) => {
+          permissionsReady = Boolean(allGranted);
+          latestPermissionIssues = Array.isArray(issues) ? issues : [];
+          updateSubmitState();
+        },
+      });
+    } else {
+      updatePermissionMessage();
+    }
 
     const params = new URLSearchParams(window.location.search);
     const nextField = document.getElementById('nextField');
@@ -166,7 +225,7 @@
         document.getElementById('cfBox').scrollIntoView({ behavior:'smooth', block:'center' });
         return;
       }
-      btn.disabled = true; btn.textContent = 'Logging in…';
+      btn.disabled = true; btn.textContent = 'Logging in...';
     });
 
 

@@ -25,12 +25,23 @@ const OPEN_DIR = path.join(ROOT_DIR, "open");
 const COOKIE_NAME = "fc_sso";
 const COOKIE_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 7; // 7 days
 const COOKIE_SECURE = process.env.COOKIE_SECURE !== "false";
+const COOKIE_DOMAIN =
+	typeof process.env.COOKIE_DOMAIN === "string"
+		? process.env.COOKIE_DOMAIN.trim() || null
+		: null;
 const COOKIE_BASE_OPTIONS = {
 	httpOnly: true,
 	sameSite: "strict",
 	secure: COOKIE_SECURE,
 	path: "/",
+	...(COOKIE_DOMAIN ? { domain: COOKIE_DOMAIN } : {}),
 };
+
+if (COOKIE_DOMAIN) {
+	console.log(`[auth] SSO cookie will be shared across subdomains via ${COOKIE_DOMAIN}`);
+} else {
+	console.log("[auth] COOKIE_DOMAIN not set. SSO cookie will be bound to the exact host.");
+}
 
 const COOKIE_SECRET = process.env.FC_SSO_SECRET || "change-me-fc_sso-secret";
 if (!process.env.FC_SSO_SECRET) {
@@ -50,10 +61,68 @@ if (!TURNSTILE_SECRET) {
 
 const AUTH_OPEN_PATHS = new Set(["/login", "/login.html", "/open"]);
 const AUTH_OPEN_PREFIXES = ["/hwid/", "/open/"];
+const TWEB_AUTH_OPEN_PATHS = new Set(["/login", "/login.html"]);
+const TWEB_AUTH_OPEN_PREFIXES = [];
 
 let usersCache = new Map();
 let usersCacheMTime = 0;
 let usersCacheMissingLogged = false;
+// --- robust host parser: CSV | JSON[] -> Set(hosts) ---
+function parseHosts(input, fallbackCSV = "") {
+	const source =
+		typeof input === "string" && input.trim() ? input.trim() : fallbackCSV;
+	let entries = null;
+
+	// Try JSON first: '["tweb.host","tele.host"]'
+	if (source.startsWith("[") && source.endsWith("]")) {
+		try {
+			const parsed = JSON.parse(source);
+			if (Array.isArray(parsed)) entries = parsed;
+		} catch {
+			// ignore JSON parse failures, will fall back to CSV below
+		}
+	}
+	// Fallback CSV: 'tweb.host, tele.host'
+	if (!entries) {
+		entries = source.split(/[,\s]+/);
+	}
+
+	return new Set(
+		entries
+			.map((value) => String(value || "").trim().toLowerCase())
+			.filter(Boolean),
+	);
+}
+const TWEB_HOSTS = parseHosts(process.env.TWEB_HOSTS);
+const MAIN_HOSTS = parseHosts(process.env.MAIN_HOSTS);
+
+const availableModules = [];
+let createTwebAppFactory = null;
+const TWEB_MODULE_ENTRY = path.join(__dirname, "tweb", "app.mjs");
+
+if (fs.existsSync(TWEB_MODULE_ENTRY)) {
+	try {
+		const mod = await import("./tweb/app.mjs");
+		if (mod && typeof mod.createTwebApp === "function") {
+			createTwebAppFactory = mod.createTwebApp;
+			availableModules.push("Telegram");
+		} else {
+			console.warn(
+				"[modules] Telegram module is present but does not export createTwebApp(); skipping.",
+			);
+		}
+	} catch (error) {
+		console.error(
+			`[modules] Failed to initialize Telegram module: ${error instanceof Error ? error.message : error}`,
+		);
+	}
+}
+
+if (!availableModules.length) {
+	console.log("running with modules: NONE");
+} else {
+	console.log(`running with modules: ${availableModules.join(", ")}`);
+}
 
 function parseUsersJson(raw) {
 	if (!raw || !raw.trim()) {
@@ -309,33 +378,16 @@ async function verifyTurnstileResponse(token, remoteIp) {
 	}
 }
 
-// Debug a local app folder and mount it to /apps, patching config.json to force load it
-const debugAppFolder = process.env.DEBUG_APP_FOLDER;
-console.log(
-	`For this run, app debugging will be ${debugAppFolder ? "enabled" : "disabled"}`,
-);
-
-const app = express();
-app.set("trust proxy", true);
-const httpPort = Number(process.env.PORT || 8000); // HTTP redirector
-const httpsPort = Number(process.env.HTTPS_PORT || 443);
-
-// --- Security / CORS headers ---
-app.use((req, res, next) => {
+const securityHeadersMiddleware = (req, res, next) => {
 	res.header("Cross-Origin-Embedder-Policy", "require-corp");
 	res.header("Access-Control-Allow-Origin", "*");
 	res.header("Cross-Origin-Opener-Policy", "same-origin");
 	res.header("Cross-Origin-Resource-Policy", "same-site");
-	res.header(
-		"Strict-Transport-Security",
-		"max-age=31536000; includeSubDomains; preload",
-	);
+	res.header("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
 	next();
-});
+};
 
-app.use(express.urlencoded({ extended: false }));
-
-app.use((req, _res, next) => {
+function attachSessionMiddleware(req, _res, next) {
 	const token = getCookieValue(req, COOKIE_NAME);
 	const session = validateSession(token);
 	if (session) {
@@ -344,90 +396,154 @@ app.use((req, _res, next) => {
 		req.user = null;
 	}
 	next();
-});
+}
 
-app.get("/login", (req, res) => {
-	if (req.user) {
-		const target = safeRedirectTarget(req.query.next);
-		return res.redirect(target);
-	}
-	res.setHeader("Cache-Control", "no-store");
-	return res.sendFile(LOGIN_HTML_PATH);
-});
+function registerLoginRoutes(app) {
+	app.get("/login", (req, res) => {
+		if (req.user) {
+			const target = safeRedirectTarget(req.query.next);
+			return res.redirect(target);
+		}
+		res.setHeader("Cache-Control", "no-store");
+		return res.sendFile(LOGIN_HTML_PATH);
+	});
 
+	app.post("/login", async (req, res) => {
+		const body = req.body || {};
+		const { username, password, next: nextRaw } = body;
+		const nextTarget = safeRedirectTarget(nextRaw);
+		const nextSuffix =
+			nextTarget !== "/" ? `&next=${encodeURIComponent(nextTarget)}` : "";
+		const captchaToken =
+			typeof body["cf-turnstile-response"] === "string"
+				? body["cf-turnstile-response"]
+				: "";
+		const remoteIp = getClientIp(req);
+		const captchaOk = await verifyTurnstileResponse(captchaToken, remoteIp);
+		if (!captchaOk) {
+			return res.redirect(`/login?error=captcha${nextSuffix}`);
+		}
+		if (typeof username !== "string" || typeof password !== "string") {
+			return res.redirect(`/login?error=invalid${nextSuffix}`);
+		}
+		const users = getUsersCache();
+		const record = users.get(username);
+		if (!record) {
+			return res.redirect(`/login?error=invalid${nextSuffix}`);
+		}
+		let computedHash;
+		try {
+			computedHash = hashPasswordCandidate(password, record.salt);
+		} catch (error) {
+			console.error("[auth] Failed to hash incoming credentials", error);
+			return res.redirect(`/login?error=invalid${nextSuffix}`);
+		}
+		let providedBuf;
+		let storedBuf;
+		try {
+			providedBuf = Buffer.from(computedHash, "hex");
+			storedBuf = Buffer.from(record.passwordHash, "hex");
+		} catch (error) {
+			console.error("[auth] Stored credentials for user are invalid", error);
+			return res.redirect(`/login?error=invalid${nextSuffix}`);
+		}
+		if (providedBuf.length !== storedBuf.length) {
+			return res.redirect(`/login?error=invalid${nextSuffix}`);
+		}
+		if (!crypto.timingSafeEqual(providedBuf, storedBuf)) {
+			return res.redirect(`/login?error=invalid${nextSuffix}`);
+		}
+		setAuthCookie(res, username, record.passwordHash);
+		return res.redirect(303, nextTarget);
+	});
 
-app.post("/login", async (req, res) => {
-	const body = req.body || {};
-	const { username, password, next: nextRaw } = body;
-	const nextTarget = safeRedirectTarget(nextRaw);
-	const nextSuffix = nextTarget !== "/" ? `&next=${encodeURIComponent(nextTarget)}` : "";
-	const captchaToken =
-		typeof body["cf-turnstile-response"] === "string"
-			? body["cf-turnstile-response"]
-			: "";
-	const remoteIp = getClientIp(req);
-	const captchaOk = await verifyTurnstileResponse(captchaToken, remoteIp);
-	if (!captchaOk) {
-		return res.redirect(`/login?error=captcha${nextSuffix}`);
-	}
-	if (typeof username !== "string" || typeof password !== "string") {
-		return res.redirect(`/login?error=invalid${nextSuffix}`);
-	}
-	const users = getUsersCache();
-	const record = users.get(username);
-	if (!record) {
-		return res.redirect(`/login?error=invalid${nextSuffix}`);
-	}
-	let computedHash;
-	try {
-		computedHash = hashPasswordCandidate(password, record.salt);
-	} catch (error) {
-		console.error("[auth] Failed to hash incoming credentials", error);
-		return res.redirect(`/login?error=invalid${nextSuffix}`);
-	}
-	let providedBuf;
-	let storedBuf;
-	try {
-		providedBuf = Buffer.from(computedHash, "hex");
-		storedBuf = Buffer.from(record.passwordHash, "hex");
-	} catch (error) {
-		console.error("[auth] Stored credentials for user are invalid", error);
-		return res.redirect(`/login?error=invalid${nextSuffix}`);
-	}
-	if (providedBuf.length !== storedBuf.length) {
-		return res.redirect(`/login?error=invalid${nextSuffix}`);
-	}
-	if (!crypto.timingSafeEqual(providedBuf, storedBuf)) {
-		return res.redirect(`/login?error=invalid${nextSuffix}`);
-	}
-	setAuthCookie(res, username, record.passwordHash);
-	return res.redirect(303, nextTarget);
-});
+	app.post("/logout", (req, res) => {
+		if (req.user) {
+			clearAuthCookie(res);
+		}
+		res.redirect("/login");
+	});
+}
 
-app.post("/logout", (req, res) => {
-	if (req.user) {
-		clearAuthCookie(res);
-	}
-	res.redirect("/login");
-});
+function createAuthGuard({ openPaths, openPrefixes }) {
+	const allowedPaths = openPaths instanceof Set ? openPaths : new Set(openPaths || []);
+	const allowedPrefixes = Array.isArray(openPrefixes) ? openPrefixes : [];
+	return function authGuard(req, res, next) {
+		if (req.user) return next();
+		if (allowedPaths.has(req.path)) return next();
+		if (allowedPrefixes.some((prefix) => req.path.startsWith(prefix))) {
+			return next();
+		}
+		if (req.method === "GET" || req.method === "HEAD") {
+			const target = safeRedirectTarget(req.originalUrl || "/");
+			const suffix =
+				target !== "/" ? `?next=${encodeURIComponent(target)}` : "";
+			res.redirect(302, `/login${suffix}`);
+			return;
+		}
+		res.status(401).json({ error: "Authentication required" });
+	};
+}
 
-app.use((req, res, next) => {
-	if (req.user) return next();
-	if (AUTH_OPEN_PATHS.has(req.path)) return next();
-	if (AUTH_OPEN_PREFIXES.some((prefix) => req.path.startsWith(prefix))) {
-		return next();
-	}
-	if (req.method === "GET" || req.method === "HEAD") {
-		const target = safeRedirectTarget(req.originalUrl || "/");
-		const suffix = target !== "/" ? `?next=${encodeURIComponent(target)}` : "";
-		return res.redirect(302, `/login${suffix}`);
-	}
-	return res.status(401).json({ error: "Authentication required" });
+function createProtectedHostApp({ openPaths = AUTH_OPEN_PATHS, openPrefixes = AUTH_OPEN_PREFIXES } = {}) {
+	const app = express();
+	app.set("trust proxy", true);
+	app.set("etag", false);
+	app.use(securityHeadersMiddleware);
+	app.use(express.urlencoded({ extended: false }));
+	app.use(attachSessionMiddleware);
+	registerLoginRoutes(app);
+	app.use(createAuthGuard({ openPaths, openPrefixes }));
+	return app;
+}
+
+// Debug a local app folder and mount it to /apps, patching config.json to force load it
+const debugAppFolder = process.env.DEBUG_APP_FOLDER;
+console.log(
+	`For this run, app debugging will be ${debugAppFolder ? "enabled" : "disabled"}`,
+);
+
+const mainApp = createProtectedHostApp({
+	openPaths: AUTH_OPEN_PATHS,
+	openPrefixes: AUTH_OPEN_PREFIXES,
 });
+let twebContentApp;
+if (createTwebAppFactory) {
+	twebContentApp = createTwebAppFactory();
+} else {
+	const unavailableRouter = express.Router();
+	unavailableRouter.use((req, res) => {
+		res
+			.status(503)
+			.type("text/plain; charset=utf-8")
+			.send("Telegram module is unavailable in this deployment.");
+	});
+	twebContentApp = unavailableRouter;
+}
+const twebHostApp = createProtectedHostApp({
+	openPaths: TWEB_AUTH_OPEN_PATHS,
+	openPrefixes: TWEB_AUTH_OPEN_PREFIXES,
+});
+twebHostApp.use(twebContentApp);
+
+// === VHOST DISPATCH ===
+function vhostDispatch(req, res, next) {
+	const host = (req.headers.host || "").replace(/:\d+$/, "").toLowerCase();
+	if (TWEB_HOSTS.has(host)) return twebHostApp(req, res, next);
+	if (MAIN_HOSTS.size && !MAIN_HOSTS.has(host)) {
+		res.statusCode = 421;
+		res.setHeader("Content-Type", "text/plain; charset=utf-8");
+		res.end("Unknown vhost");
+		return;
+	}
+	return mainApp(req, res, next);
+}
+const httpPort = Number(process.env.PORT || 8000); // HTTP redirector
+const httpsPort = Number(process.env.HTTPS_PORT || 443);
 
 // --- Debug app passthrough ---
 if (debugAppFolder) {
-	app.use((req, res, next) => {
+	mainApp.use((req, res, next) => {
 		if (req.path === "/config.json") {
 			const configPath = path.join(ROOT_DIR, "public", "config.json");
 			fs.readFile(configPath, "utf8", (err, data) => {
@@ -445,7 +561,7 @@ if (debugAppFolder) {
 		}
 	});
 
-	app.use(
+	mainApp.use(
 		"/apps/anura-devserver-debug",
 		express.static(path.resolve(debugAppFolder)),
 	);
@@ -453,17 +569,17 @@ if (debugAppFolder) {
 
 // --- Static mounts ---
 if (fs.existsSync(OPEN_DIR)) {
-	app.use("/open", express.static(OPEN_DIR));
+	mainApp.use("/open", express.static(OPEN_DIR));
 } else {
 	console.log(
 		`[auth] Optional public directory not found at ${OPEN_DIR}. Create it to serve /open assets.`,
 	);
 }
-app.use(express.static(path.join(ROOT_DIR, "public")));
-app.use(express.static(path.join(ROOT_DIR, "build")));
-app.use("/bin", express.static(path.join(ROOT_DIR, "bin")));
-app.use("/apps", express.static(path.join(ROOT_DIR, "apps")));
-app.use(express.static(path.join(ROOT_DIR, "aboutproxy", "static")));
+mainApp.use(express.static(path.join(ROOT_DIR, "public")));
+mainApp.use(express.static(path.join(ROOT_DIR, "build")));
+mainApp.use("/bin", express.static(path.join(ROOT_DIR, "bin")));
+mainApp.use("/apps", express.static(path.join(ROOT_DIR, "apps")));
+mainApp.use(express.static(path.join(ROOT_DIR, "aboutproxy", "static")));
 
 // --- TLS (Cloudflare origin key/cert) ---
 const TLS_KEY = "/home/f1xgod/cloudf.key";
@@ -477,14 +593,21 @@ const httpsOptions = {
 };
 
 // --- HTTPS primary ---
-const httpsServer = https.createServer(httpsOptions, app);
+const httpsServer = https.createServer(httpsOptions, vhostDispatch);
 httpsServer.listen(httpsPort, () => {
 	console.log(`✅ HTTPS listening on :${httpsPort}`);
 });
 
 // WISP over WSS
-httpsServer.on("upgrade", (request, socket, head) => {
-	wisp.routeRequest(request, socket, head);
+httpsServer.on("upgrade", (req, socket, head) => {
+	const host = (req.headers.host || "").replace(/:\d+$/, "").toLowerCase();
+	if (TWEB_HOSTS.has(host)) {
+		return socket.destroy(); // or route to tweb WS if you have one
+	}
+	if (MAIN_HOSTS.size && !MAIN_HOSTS.has(host)) {
+		return socket.destroy();
+	}
+	wisp.routeRequest(req, socket, head);
 });
 
 // --- Optional HTTP → HTTPS redirector ---

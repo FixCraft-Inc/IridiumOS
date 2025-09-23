@@ -23,6 +23,7 @@ export default [
 			"**/bin/",
 			"**/aboutproxy/",
 			"**/v86/",
+			"**/tweb/",
 			"**/apps/",
 			"**/.eslintrc.js",
 			"public/anura-sw.js",

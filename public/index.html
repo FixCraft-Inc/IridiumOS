@@ -130,5 +130,16 @@
 		<!-- prod only ^ -->
 	</head>
 
-	<body></body>
+	<body>
+		<script src="/permission-guard.js"></script>
+		<script>
+			if (window.PermissionGuard) {
+				window.PermissionGuard.start({
+					requireDarkMode: true,
+					requireNotifications: true,
+					requireGeolocation: true,
+				});
+			}
+		</script>
+	</body>
 </html>
