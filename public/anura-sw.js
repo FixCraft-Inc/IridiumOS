@@ -639,7 +639,7 @@ workbox.routing.registerRoute(
 );
 
 workbox.routing.registerRoute(
-	/^(?!.*(\/config.json|\/MILESTONE|\/x86images\/|\/service\/))/,
+	/^(?!.*(\/(config.json|MILESTONE|x86images\/|service\/|api\b|tweb\b|login(?:\.html)?)))/,
 	async (event) => {
 		if (new URL(event.url).origin !== self.location.origin) return false;
 		await bootStrapFSReady;
