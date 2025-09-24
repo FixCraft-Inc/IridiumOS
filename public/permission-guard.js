@@ -1,11 +1,16 @@
 (() => {
 	const DEFAULT_OPTIONS = {
-		requireDarkMode: true,
-		requireNotifications: true,
-		requireGeolocation: true,
-		clearOnFailure: true,
-		onStatusChange: null,
-	};
+	requireDarkMode: true,
+	requireNotifications: true,
+	requireGeolocation: true,
+	clearOnFailure: true,
+	onStatusChange: null,
+	autoRequest: true,
+	autoRequestDelayMs: 300,
+	reloadDelayMs: 400,
+};
+
+	const RELOAD_MARKER_PREFIX = "fc-permission-reload:";
 
 	const ISSUE_TEXT = {
 		'dark-mode': 'Enable dark mode in your operating system or browser.',
@@ -26,6 +31,22 @@
 			this.clearPromise = null;
 			this.isRequesting = false;
 			this.started = false;
+			this.geoOverrideState = null;
+			this.autoRequestScheduled = false;
+			this.autoRequestTimer = null;
+			this.lastAutoRequestSignature = null;
+			this.hasRequestedPermissions = false;
+			this.reloadScheduled = false;
+			this.reloadSignature = null;
+			this.reloadTimer = null;
+			this.priorReloadSignature = null;
+			if (
+				typeof window !== 'undefined' &&
+				typeof window.name === 'string' &&
+				window.name.startsWith(RELOAD_MARKER_PREFIX)
+			) {
+				this.priorReloadSignature = window.name.slice(RELOAD_MARKER_PREFIX.length) || null;
+			}
 		}
 
 		start() {
@@ -171,9 +192,11 @@
 
 		async performClear(signature) {
 			if (!this.options.clearOnFailure) return;
-			if (!signature || signature === this.lastClearedSignature) return;
+			if (!signature || signature === this.lastClearedSignature || signature === this.priorReloadSignature) return;
+			if (this.clearPromise) {
+				return this.clearPromise;
+			}
 			this.lastClearedSignature = signature;
-			if (this.clearPromise) return;
 			this.clearPromise = (async () => {
 				try {
 					this.clearCookies();
@@ -188,11 +211,13 @@
 					this.clearPromise = null;
 				}
 			})();
+			return this.clearPromise;
 		}
 
 		async getGeolocationState() {
 			if (!this.options.requireGeolocation) return 'skipped';
 			if (!navigator.geolocation) return 'denied';
+			if (this.geoOverrideState) return this.geoOverrideState;
 			if (navigator.permissions && navigator.permissions.query) {
 				try {
 					if (!this.geoPermissionStatus) {
@@ -216,6 +241,7 @@
 			if (this.isRequesting) return;
 			this.isRequesting = true;
 			this.ensureOverlay();
+			this.hasRequestedPermissions = true;
 			if (this.retryBtnEl) {
 				this.retryBtnEl.disabled = true;
 				this.retryBtnEl.textContent = 'Requesting...';
@@ -232,13 +258,33 @@
 					}
 				}
 				if (this.options.requireGeolocation && navigator.geolocation && navigator.geolocation.getCurrentPosition) {
-					await new Promise((resolve) => {
-						navigator.geolocation.getCurrentPosition(
-							() => resolve(true),
-							() => resolve(false),
-							{ enableHighAccuracy: false, timeout: 10000 },
-						);
-					});
+					try {
+						await new Promise((resolve) => {
+							navigator.geolocation.getCurrentPosition(
+								() => {
+									this.geoOverrideState = 'granted';
+									resolve(true);
+								},
+								(error) => {
+									if (error && typeof error.code === 'number') {
+										const deniedCode = typeof error.PERMISSION_DENIED === 'number' ? error.PERMISSION_DENIED : 1;
+										if (error.code === deniedCode) {
+											this.geoOverrideState = 'denied';
+										} else {
+											this.geoOverrideState = null;
+										}
+									} else {
+										this.geoOverrideState = null;
+									}
+									resolve(false);
+								},
+								{ enableHighAccuracy: false, timeout: 10000 },
+							);
+						});
+					} catch (error) {
+						console.warn('Geolocation permission request failed', error);
+						this.geoOverrideState = null;
+					}
 				}
 			} finally {
 				if (this.retryBtnEl) {
@@ -248,6 +294,73 @@
 				this.isRequesting = false;
 				this.enforce();
 			}
+		}
+
+		queueAutoRequest(signature) {
+			if (this.options.autoRequest === false) return;
+			if (this.isRequesting) return;
+			if (this.autoRequestScheduled && this.lastAutoRequestSignature === signature) return;
+			if (this.lastAutoRequestSignature === signature && this.hasRequestedPermissions) return;
+			this.autoRequestScheduled = true;
+			this.lastAutoRequestSignature = signature;
+			const delay = Math.max(0, Number(this.options.autoRequestDelayMs ?? 300));
+			if (this.autoRequestTimer) {
+				clearTimeout(this.autoRequestTimer);
+			}
+			this.autoRequestTimer = setTimeout(() => {
+				this.autoRequestScheduled = false;
+				this.autoRequestTimer = null;
+				if (!this.isRequesting) {
+					this.attemptPermissionRequests();
+				}
+			}, delay);
+		}
+
+		scheduleReload(signature) {
+			if (!signature) return;
+			if (!this.hasRequestedPermissions) return;
+			if (this.reloadScheduled) return;
+			if (signature === this.priorReloadSignature) return;
+			this.reloadScheduled = true;
+			this.reloadSignature = signature;
+			this.priorReloadSignature = signature;
+			if (typeof window !== 'undefined') {
+				try {
+					window.name = RELOAD_MARKER_PREFIX + signature;
+				} catch {}
+				const delay = Math.max(0, Number(this.options.reloadDelayMs ?? 400));
+				this.reloadTimer = setTimeout(() => {
+					try {
+						window.location.reload();
+					} catch (error) {
+						console.warn('Permission guard failed to reload the page', error);
+					}
+				}, delay);
+			}
+		}
+
+		resetReloadMarker() {
+			if (
+				typeof window !== 'undefined' &&
+				typeof window.name === 'string' &&
+				window.name.startsWith(RELOAD_MARKER_PREFIX)
+			) {
+				window.name = '';
+			}
+			this.priorReloadSignature = null;
+			this.reloadScheduled = false;
+			this.reloadSignature = null;
+			if (this.reloadTimer) {
+				clearTimeout(this.reloadTimer);
+				this.reloadTimer = null;
+			}
+			this.lastAutoRequestSignature = null;
+			this.autoRequestScheduled = false;
+			if (this.autoRequestTimer) {
+				clearTimeout(this.autoRequestTimer);
+				this.autoRequestTimer = null;
+			}
+			this.hasRequestedPermissions = false;
 		}
 
 		async enforce() {
@@ -262,13 +375,26 @@
 			if (this.options.requireGeolocation && status.geolocation !== 'granted') issues.push('geolocation');
 			const signature = issues.slice().sort().join(',');
 			if (issues.length) {
+				const notificationsDenied =
+					this.options.requireNotifications && status.notifications === 'denied';
+				const geolocationDenied =
+					this.options.requireGeolocation && status.geolocation === 'denied';
+				const shouldClear =
+					Boolean(signature) &&
+					this.hasRequestedPermissions &&
+					!this.isRequesting &&
+					(notificationsDenied || geolocationDenied);
+
 				this.showOverlay(issues);
-				if (signature && signature !== this.lastFailureSignature) {
-					this.performClear(signature);
+				this.queueAutoRequest(signature);
+				if (shouldClear) {
+					await this.performClear(signature);
+					this.scheduleReload(signature);
 				}
 			} else {
 				this.hideOverlay();
 				this.lastClearedSignature = null;
+				this.resetReloadMarker();
 			}
 			this.lastFailureSignature = signature;
 			if (typeof this.options.onStatusChange === 'function') {

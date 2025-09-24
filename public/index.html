@@ -125,13 +125,7 @@
 		<script type="module" src="lib/bcc.js"></script>
 
 		<link rel="manifest" href="manifest.json" />
-
-		<!-- <script type="text/javascript" src="/dist.js"></script> -->
-		<!-- prod only ^ -->
-	</head>
-
-	<body>
-		<script src="/permission-guard.js"></script>
+		<script type="text/javascript" src="/permission-guard.js"></script>
 		<script>
 			if (window.PermissionGuard) {
 				window.PermissionGuard.start({
@@ -141,5 +135,10 @@
 				});
 			}
 		</script>
+		<!-- <script type="text/javascript" src="/dist.js"></script> -->
+		<!-- prod only ^ -->
+	</head>
+
+	<body>
 	</body>
 </html>
