@@ -120,19 +120,19 @@
     const errBox=document.getElementById('loginError');
     const permMsg=document.getElementById('permMsg');
     let permissionsReady=false;
-    let latestPermissionIssues=['notifications','geolocation'];
+    let latestPermissionIssues=[];
 
     const clearError = () => { if (errBox) errBox.classList.remove('show'); };
 
     const formatIssueSummary = (issues) => {
-      if (!Array.isArray(issues) || !issues.length) return 'notifications and location';
+      if (!Array.isArray(issues) || !issues.length) return '';
       const labelMap={
         'notifications':'notifications',
         'geolocation':'location access',
         'dark-mode':'dark mode',
       };
       const parts=issues.map((code)=>labelMap[code]).filter(Boolean);
-      if (!parts.length) return 'notifications and location';
+      if (!parts.length) return '';
       if (parts.length===1) return parts[0];
       if (parts.length===2) return parts[0]+' and '+parts[1];
       return parts.slice(0,-1).join(', ')+', and '+parts[parts.length-1];
@@ -140,8 +140,9 @@
 
     const updatePermissionMessage = () => {
       if (!permMsg) return;
-      if (!permissionsReady) {
-        permMsg.textContent='Please enable '+formatIssueSummary(latestPermissionIssues)+' to sign in.';
+      const summary=formatIssueSummary(latestPermissionIssues);
+      if (!permissionsReady && summary) {
+        permMsg.textContent='Please enable '+summary+' to sign in.';
         permMsg.classList.add('show');
       } else {
         permMsg.classList.remove('show');

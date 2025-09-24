@@ -21,6 +21,12 @@ dotenv.config({ path: path.join(__dirname, ".env"), override: true });
 const LOGIN_HTML_PATH = path.join(__dirname, "login.html");
 const USERS_PATH = path.join(__dirname, "users.json");
 const OPEN_DIR = path.join(ROOT_DIR, "open");
+const PUBLIC_CONFIG_PATH = path.join(ROOT_DIR, "public", "config.json");
+const DEFAULT_CONFIG_PATH = path.join(ROOT_DIR, "config.default.json");
+const TWEB_DIR = path.join(__dirname, "tweb");
+const TWEB_PACKAGE_JSON_PATH = path.join(TWEB_DIR, "package.json");
+const TWEB_NODE_MODULES_DIR = path.join(TWEB_DIR, "node_modules");
+
 
 const COOKIE_NAME = "fc_sso";
 const COOKIE_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 7; // 7 days
@@ -59,7 +65,13 @@ if (!TURNSTILE_SECRET) {
 	);
 }
 
-const AUTH_OPEN_PATHS = new Set(["/login", "/login.html", "/open"]);
+const AUTH_OPEN_PATHS = new Set([
+	"/login",
+	"/login.html",
+	"/open",
+	"/manifest.json",
+	"/permission-guard.js",
+]);
 const AUTH_OPEN_PREFIXES = ["/hwid/", "/open/"];
 const TWEB_AUTH_OPEN_PATHS = new Set(["/login", "/login.html"]);
 const TWEB_AUTH_OPEN_PREFIXES = [];
@@ -96,6 +108,57 @@ function parseHosts(input, fallbackCSV = "") {
 const TWEB_HOSTS = parseHosts(process.env.TWEB_HOSTS);
 const MAIN_HOSTS = parseHosts(process.env.MAIN_HOSTS);
 
+if (!fs.existsSync(PUBLIC_CONFIG_PATH)) {
+	try {
+		if (fs.existsSync(DEFAULT_CONFIG_PATH)) {
+			fs.copyFileSync(DEFAULT_CONFIG_PATH, PUBLIC_CONFIG_PATH);
+			console.log(
+				`[boot] public/config.json missing; copied default config from ${DEFAULT_CONFIG_PATH}`,
+			);
+		} else {
+			console.warn(
+				"[boot] Neither public/config.json nor config.default.json found. /config.json requests will fail until one is provided.",
+			);
+		}
+	} catch (error) {
+		console.error(
+			`[boot] Failed to create public/config.json: ${
+				error instanceof Error ? error.message : error
+			}`,
+		);
+	}
+}
+
+let twebPackageManager = null;
+if (fs.existsSync(TWEB_PACKAGE_JSON_PATH)) {
+	try {
+		const pkgRaw = fs.readFileSync(TWEB_PACKAGE_JSON_PATH, "utf8");
+		const pkgJson = JSON.parse(pkgRaw || "{}");
+		if (pkgJson && typeof pkgJson.packageManager === "string") {
+			twebPackageManager = pkgJson.packageManager;
+		}
+	} catch (error) {
+		console.warn(
+			`[modules] Unable to inspect tweb/package.json: ${
+				error instanceof Error ? error.message : error
+			}`,
+		);
+	}
+}
+
+
+const twebNodeModulesPresent = fs.existsSync(TWEB_NODE_MODULES_DIR);
+if (
+	twebPackageManager &&
+	twebPackageManager.startsWith("pnpm") &&
+	fs.existsSync(TWEB_PACKAGE_JSON_PATH) &&
+	!twebNodeModulesPresent
+) {
+	console.warn(
+		"[modules] TWeb dependencies not installed. Run `pnpm install --prod` inside server/tweb before enabling the Telegram module.",
+	);
+}
+
 const availableModules = [];
 let createTwebAppFactory = null;
 const TWEB_MODULE_ENTRY = path.join(__dirname, "tweb", "app.mjs");
@@ -115,6 +178,11 @@ if (fs.existsSync(TWEB_MODULE_ENTRY)) {
 		console.error(
 			`[modules] Failed to initialize Telegram module: ${error instanceof Error ? error.message : error}`,
 		);
+		if (twebPackageManager && twebPackageManager.startsWith("pnpm")) {
+			console.error(
+				"[modules] Make sure to install Telegram Web dependencies with `pnpm install --prod` inside server/tweb before starting the server.",
+			);
+		}
 	}
 }
 

@@ -18,6 +18,8 @@ export default [
 	{
 		ignores: [
 			"**/dist.js",
+			"**/dist2.js",
+			"**/permission-guard.js",
 			"**/build/",
 			"**/anuraos-types/",
 			"**/bin/",
