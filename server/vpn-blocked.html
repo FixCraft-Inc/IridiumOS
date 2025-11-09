@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta http-equiv="x-ua-compatible" content="ie=edge"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Access Restricted · FixCraft</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'">
+<meta http-equiv="X-Content-Type-Options" content="nosniff">
+<meta http-equiv="Referrer-Policy" content="no-referrer">
+<meta http-equiv="Permissions-Policy" content="geolocation=(), microphone=(), camera=()">
+<style>
+  :root{
+    --bg:#0b0d12; --grad1:#151b2c; --grad2:#0e1120; --glow1:#7c3aed; --glow2:#22d3ee;
+    --txt:#e5edff; --dim:#97a2c3; --ring:#2dd4bf33;
+  }
+  html,body{height:100%}
+  body{
+    margin:0; background:
+      radial-gradient(1000px 600px at 120% -10%, #3b82f610, transparent 40%),
+      radial-gradient(600px 400px at -10% 120%, #22d3ee10, transparent 40%),
+      linear-gradient(180deg,var(--bg),var(--grad1) 40%,var(--grad2));
+    color:var(--txt); font:16px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, sans-serif;
+    display:grid; min-height:100%; grid-template-rows:1fr auto;
+  }
+  .wrap{display:grid; place-items:center; padding:40px 20px;}
+  .card{
+    text-align:center; max-width:860px; padding:40px 28px;
+    border:1px solid #1f2840; border-radius:18px;
+    background:linear-gradient(180deg,#0e1422,#0b0f1a);
+    position:relative; overflow:hidden;
+    box-shadow:0 20px 80px #0008, inset 0 0 0 1px #0004;
+  }
+  .ring{position:absolute; inset:-2px; border-radius:20px; pointer-events:none;
+    box-shadow:0 0 0 3px var(--ring), 0 0 80px #7c3aed22, 0 0 120px #22d3ee22; filter:blur(.2px);}
+  h1{
+    margin:0 0 10px; font-size:clamp(24px,4.2vw,40px); font-weight:800; letter-spacing:.2px;
+    background:linear-gradient(90deg,var(--glow1),var(--glow2));
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    text-shadow:0 0 24px #7c3aed33;
+  }
+  p{margin:0 auto 16px; color:var(--dim); max-width:48ch;}
+  .badge{display:inline-flex; align-items:center; gap:10px; padding:10px 14px; margin-top:10px;
+    border:1px solid #24314a; border-radius:12px;
+    background:linear-gradient(180deg,#0e1422,#0b0d12); color:#e2e8f0;}
+  .dot{width:8px;height:8px;border-radius:50%;background:#f59e0b;box-shadow:0 0 10px #f59e0b;}
+  .proton-extra{margin-top:24px;padding:18px;border:1px solid #2f3a55;border-radius:14px;background:linear-gradient(180deg,#11182a,#0b0f1c);box-shadow:0 10px 30px #0005;}
+  .proton-extra h2{margin:0 0 8px;font-size:20px;color:#f9a8d4;}
+  .proton-extra p{margin:6px 0;color:#e5edff;}
+  /* Footer */
+  .fc-footer{position:relative;overflow:hidden;border-top:1px solid #1c2433;background:
+    radial-gradient(1200px 600px at 120% -20%, #3b82f610, transparent 40%),
+    linear-gradient(180deg, #0b0d12 0%, #0b0d12 40%, #0f1320 100%);
+    color:#cbd5e1;font:14.5px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;}
+  .fc-footer::before{content:"";position:absolute;inset:auto -10% 0 -10%;height:2px;
+    background:linear-gradient(90deg,#7c3aed,#22d3ee);opacity:.6;filter:blur(.6px);}
+  .fc-footer .fc-wrap{max-width:1160px;margin:auto;padding:36px 20px;display:grid;gap:28px;grid-template-columns:1.1fr .9fr .9fr;}
+  @media (max-width:880px){.fc-footer .fc-wrap{grid-template-columns:1fr;gap:20px;}}
+  .fc-brand{display:flex;gap:16px;align-items:center;}
+  .fc-logo{width:44px;height:44px;border-radius:12px;background:
+    radial-gradient(120% 120% at -10% -10%, #0000, #0000 20%, #000 21%),
+    conic-gradient(from 210deg at 50% 50%, #111, #1f2937 60%, #0b0d12 100%);
+    border:1px solid #273244;position:relative;box-shadow:0 8px 30px #0006,inset 0 0 0 2px #0003;}
+  .fc-logo::after{content:"FC";position:absolute;inset:0;display:grid;place-items:center;
+    font-weight:800;letter-spacing:.5px;background:linear-gradient(90deg,#7c3aed,#22d3ee);
+    -webkit-background-clip:text;background-clip:text;color:transparent;text-shadow:0 0 24px #7c3aed33;}
+  .fc-title{font-weight:700;font-size:18px;}
+  .fc-sub{color:#7a8699;max-width:360px;}
+  .fc-badges{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px;}
+  .fc-chip{--b:#263142;display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--b);
+    border-radius:999px;background:linear-gradient(180deg,#0e1422,#0b0d12);color:#c6d0e4;}
+  .fc-dot{width:8px;height:8px;border-radius:50%;background:#10b981;box-shadow:0 0 10px #10b981;}
+  .fc-col h4{margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:#9fb4d6;}
+  .fc-col ul{list-style:none;margin:0;padding:0;display:grid;gap:6px;}
+  .fc-col a{display:inline-flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;text-decoration:none;color:#d2d9e7;background:transparent;border:1px solid transparent;}
+  .fc-col a:hover{border-color:#223047;background:#0e1624;}
+  .fc-bottom{border-top:1px solid #1a2231;padding:14px 20px;}
+  .fc-bottom .fc-wrap{padding:0;display:flex;align-items:center;justify-content:space-between;gap:12px;}
+  @media (max-width:640px){.fc-bottom .fc-wrap{flex-direction:column;align-items:flex-start;}}
+  .fc-left{display:flex;align-items:center;gap:10px;color:#93a6c6;}
+  .fc-left strong{color:#dbe5ff;}
+  .fc-right{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
+  .fc-btn{display:inline-flex;align-items:center;gap:10px;padding:8px 12px;border:1px solid #263046;border-radius:10px;background:linear-gradient(180deg,#0e1422,#0b0d12);color:#e2e8f0;text-decoration:none;transition:box-shadow .2s ease;}
+  .fc-btn:hover{box-shadow:0 0 0 3px #2dd4bf33,0 0 24px #7c3aed55;}
+  .fc-x{width:18px;height:18px;}
+</style>
+</head>
+<body>
+  <main class="wrap" role="main" aria-label="Access notice">
+    <section class="card" aria-live="polite">
+      <div class="ring" aria-hidden="true"></div>
+      <h1>Nya~ Access Denied! (｡◕‿◕｡)</h1>
+      <p id="vpn-message">Hey sweetie, looks like you're using <span id="provider-name">a VPN</span>~ Sorry, but that IP tastes really bad, I don't want to get sick! (´｡• ᵕ •｡`) ♡</p>
+      <p>Please turn off your <span id="provider-name-2">VPN</span> and visit me again~ I promise I'll be nice! ✨</p>
+      <div class="badge" aria-label="policy note"><span class="dot"></span> Server-chan is protecting herself! (◡ ‿ ◡) ♡</div>
+      <div id="proton-extra" class="proton-extra" hidden>
+        <h2>Heehee~ Proton engine spotted!</h2>
+        <p>Server: <strong id="proton-server-name">Unknown</strong></p>
+        <p>Location: <span id="proton-location">Somewhere cozy</span></p>
+        <p id="proton-tier-line">Are you on the free route or the paid highway?</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- FixCraft Powered Footer -->
+  <footer class="fc-footer" role="contentinfo" aria-label="FixCraft footer">
+    <div class="fc-wrap">
+      <div>
+        <div class="fc-brand" aria-label="FixCraft brand">
+          <div class="fc-logo" aria-hidden="true"></div>
+          <div>
+            <div class="fc-title">Powered By FixCraft®</div>
+            <div class="fc-sub">Fast AF infrastructure • Zero-downtime deploys • Nuke-proof automation</div>
+          </div>
+        </div>
+        <div class="fc-badges" aria-label="status badges">
+          <span class="fc-chip"><span class="fc-dot"></span> 99.99% Uptime</span>
+          <span class="fc-chip">TLS 1.3 • HSTS</span>
+          <span class="fc-chip">Cloudflare Shield</span>
+          <span class="fc-chip">Made with ❤ in JP/CA</span>
+        </div>
+      </div>
+      <nav class="fc-col" aria-label="Product">
+        <h4>Product</h4>
+        <ul>
+          <li><a href="#">Edge Hosting</a></li>
+          <li><a href="#">Static Sites</a></li>
+          <li><a href="#">APIs & Workers</a></li>
+        </ul>
+      </nav>
+      <nav class="fc-col" aria-label="Company">
+        <h4>Company</h4>
+        <ul>
+          <li><a href="#">Status</a></li>
+          <li><a href="#">Security</a></li>
+          <li><a href="https://www.fixcraft.org/terms-privacy">Terms & Privacy</a></li>
+        </ul>
+      </nav>
+    </div>
+    <div class="fc-bottom">
+      <div class="fc-wrap">
+        <div class="fc-left">© <span data-fixcraft-year></span> <strong>FixCraft®</strong> All rights reserved.</div>
+        <div class="fc-right">
+          <a class="fc-btn" href="#" aria-label="Open FixCraft docs">Docs</a>
+          <a class="fc-btn" href="#" aria-label="Contact FixCraft support">Support</a>
+          <a class="fc-btn" href="https://github.com/FixCraft-Inc" aria-label="View FixCraft on GitHub">GitHub</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+  <script>
+    window.vpnProvider = '{{PROVIDER}}'; // Replaced server-side
+    window.protonMeta = {{PROTON_META}}; // Replaced server-side
+    
+    (function(){
+      var y=new Date().getFullYear();
+      document.querySelectorAll('[data-fixcraft-year]').forEach(n=>n.textContent=y);
+      
+      function formatProviderLabel(raw) {
+        if (!raw) return 'a VPN';
+        var text = String(raw).trim();
+        if (!text || text.toLowerCase().includes('unknown') || text.includes('{')) {
+          return 'a VPN';
+        }
+        return text + ' VPN';
+      }
+      
+      // Update VPN provider names dynamically
+      function updateProviderNames() {
+        var label = formatProviderLabel(window.vpnProvider);
+        document.querySelectorAll('#provider-name, #provider-name-2').forEach(function(el) {
+          el.textContent = label;
+          if (label !== 'a VPN' && el.id === 'provider-name') {
+            el.style.fontWeight = 'bold';
+            el.style.color = '#f59e0b';
+          }
+        });
+        
+        var badge = document.querySelector('.badge');
+        if (badge) {
+          badge.innerHTML = '<span class="dot"></span> Detected: ' + label + ' (◡ ‿ ◡) ♡';
+        }
+      }
+      
+      function updateProtonExtra() {
+        var meta = window.protonMeta;
+        var wrap = document.getElementById('proton-extra');
+        if (!wrap) return;
+        if (!meta || !meta.server) {
+          wrap.hidden = true;
+          return;
+        }
+        wrap.hidden = false;
+        var server = document.getElementById('proton-server-name');
+        if (server) {
+          server.textContent = meta.server || 'ProtonVPN';
+        }
+        var location = document.getElementById('proton-location');
+        if (location) {
+          var pieces = [];
+          if (meta.city) pieces.push(meta.city);
+          if (meta.country) pieces.push(meta.country);
+          location.textContent = pieces.join(', ') || 'Somewhere cozy';
+        }
+        var tierLine = document.getElementById('proton-tier-line');
+        if (tierLine) {
+          var paid = typeof meta.tier === 'number' && meta.tier > 0;
+          tierLine.textContent = paid
+            ? "Heh, paid VPN? 💸 You fancy renegade~"
+            : "Free tier detected~ Such a thrifty cutie!";
+        }
+      }
+      
+      updateProviderNames();
+      updateProtonExtra();
+      
+      var originalProvider = window.vpnProvider;
+      var originalMeta = JSON.stringify(window.protonMeta || null);
+      setInterval(function() {
+        if (window.vpnProvider !== originalProvider) {
+          originalProvider = window.vpnProvider;
+          updateProviderNames();
+        }
+        var nextMeta = JSON.stringify(window.protonMeta || null);
+        if (nextMeta !== originalMeta) {
+          originalMeta = nextMeta;
+          updateProtonExtra();
+        }
+      }, 300);
+    })();
+  </script>
+</body>
+</html>
