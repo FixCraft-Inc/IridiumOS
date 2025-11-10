@@ -101,6 +101,7 @@ if [ "$need_node" -eq 1 ]; then
   log "Installing Node.js 22 via NodeSource"
   curl -fsSL https://deb.nodesource.com/setup_22.x | $SUDO -E bash -
   ensure_pkg nodejs
+  log "Node now $(node -v 2>/dev/null || true)"
 else
   log "Node OK: $(node -v)"
 fi
@@ -173,7 +174,13 @@ have docker-compose && echo "  ✔ docker-compose   shim OK" || echo "  ✘ dock
 if [ -x "$SCRIPT_DIR/HEALTH.sh" ]; then
   echo
   log "Verifying prerequisites with HEALTH.sh (--no-compile)"
-  sudo -u "$TARGET_USER" -H bash -c "cd \"$SCRIPT_DIR\" && ./HEALTH.sh --no-compile"
+  USER_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
+  BASE_PATH="${PATH:-/usr/local/bin:/usr/bin:/bin}"
+  EXTRA_PATH=""
+  if [ -n "$USER_HOME" ] && [ -d "$USER_HOME/.cargo/bin" ]; then
+    EXTRA_PATH="$USER_HOME/.cargo/bin:"
+  fi
+  sudo -u "$TARGET_USER" -H env PATH="${EXTRA_PATH}${BASE_PATH}" bash -c "cd \"$SCRIPT_DIR\" && ./HEALTH.sh --no-compile"
 fi
 
 echo
