@@ -5,9 +5,10 @@ set -euo pipefail
 # ----------------------------- CONFIG ---------------------------------
 REQ_NODE_MAJOR_MIN=20
 REQ_JAVA_MIN=11
-REQ_RAM_MB_MIN=4096
+REQ_RAM_MB_MIN=3072
 REQ_DISK_MB_MIN=5120
-ESSENTIAL_CMDS=(make git gcc clang node npm rustup cargo java jq uuidgen wasm-opt inotifywait ip iptables sysctl wg-quick setpriv)
+ESSENTIAL_CMDS=(make git gcc clang node npm rustup cargo java jq uuidgen wasm-opt inotifywait ip setpriv)
+OPTIONAL_CMDS=(iptables sysctl wg-quick)
 ALT_CMDS=(wget curl)
 RUST_TARGETS=(wasm32-unknown-unknown i686-unknown-linux-gnu)
 # ----------------------------------------------------------------------
@@ -30,7 +31,7 @@ Usage: $0 [--json] [--deep] [--no-compile]
 EOF
 }
 
-for arg in "${@:-}"; do
+for arg in "$@"; do
   case "${arg}" in
     --json) JSON_OUT=1;;
     --deep) DEEP=1;;
@@ -120,17 +121,8 @@ for c in "${ESSENTIAL_CMDS[@]}"; do
 	else
 		echo "$(kv "$c" "${FAIL} missing")"; REPORT["cmd_$c"]="no"; MISSING+=("$c")
 		case "$c" in
-			wg-quick)
-				FIXHINTS+=("Install wireguard-tools (provides wg-quick). Debian/Ubuntu: sudo apt install wireguard-tools; Fedora: sudo dnf install wireguard-tools")
-				;;
 			ip)
 				FIXHINTS+=("Install iproute2 (provides the ip command). Debian/Ubuntu: sudo apt install iproute2; Fedora: sudo dnf install iproute")
-				;;
-			iptables)
-				FIXHINTS+=("Install iptables legacy tooling. Debian/Ubuntu: sudo apt install iptables; Fedora: sudo dnf install iptables")
-				;;
-			sysctl)
-				FIXHINTS+=("Install procps (sysctl). Debian/Ubuntu: sudo apt install procps; Fedora: sudo dnf install procps-ng")
 				;;
 			setpriv)
 				FIXHINTS+=("Install util-linux (setpriv). Debian/Ubuntu: sudo apt install util-linux; Fedora: sudo dnf install util-linux")
@@ -145,6 +137,26 @@ if [ "$ALT_OK" = "yes" ]; then
 else
   echo "$(kv 'wget OR curl' "${FAIL} neither present")"; REPORT[cmd_downloader]="no"; MISSING+=("wget/curl")
 fi
+
+# Optional runtime commands (for server network namespace guard)
+for c in "${OPTIONAL_CMDS[@]}"; do
+	if have "$c"; then
+		echo "$(kv "$c (optional)" "${PASS} found")"; REPORT["cmd_$c"]="yes"
+	else
+		echo "$(kv "$c (optional)" "${WARN} missing")"; REPORT["cmd_$c"]="no"
+		case "$c" in
+			wg-quick)
+				FIXHINTS+=("Optional: Install wireguard-tools for network namespace VPN support. Debian/Ubuntu: sudo apt install wireguard-tools")
+				;;
+			iptables)
+				FIXHINTS+=("Optional: Install iptables for network namespace firewall support. Debian/Ubuntu: sudo apt install iptables")
+				;;
+			sysctl)
+				FIXHINTS+=("Optional: Install procps (sysctl) for network namespace support. Debian/Ubuntu: sudo apt install procps")
+				;;
+		esac
+	fi
+done
 
 # Node version
 if have node; then
