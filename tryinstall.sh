@@ -46,7 +46,7 @@ $SUDO apt-get update -y
 
 # ========= Core tools =========
 log "Core deps (clang, inotify-tools, jq, uuid-runtime, binaryen, TLS, net utils)"
-ensure_pkgs clang inotify-tools jq uuid-runtime binaryen ca-certificates curl gnupg iproute2 iptables wireguard-tools
+ensure_pkgs clang inotify-tools jq uuid-runtime binaryen ca-certificates curl gnupg iproute2 iptables procps wireguard-tools
 
 # ========= Java (>=11; prefer 21) =========
 if have java; then

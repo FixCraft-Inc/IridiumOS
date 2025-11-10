@@ -121,17 +121,8 @@ for c in "${ESSENTIAL_CMDS[@]}"; do
 	else
 		echo "$(kv "$c" "${FAIL} missing")"; REPORT["cmd_$c"]="no"; MISSING+=("$c")
 		case "$c" in
-			wg-quick)
-				FIXHINTS+=("Install wireguard-tools (provides wg-quick). Debian/Ubuntu: sudo apt install wireguard-tools; Fedora: sudo dnf install wireguard-tools")
-				;;
 			ip)
 				FIXHINTS+=("Install iproute2 (provides the ip command). Debian/Ubuntu: sudo apt install iproute2; Fedora: sudo dnf install iproute")
-				;;
-			iptables)
-				FIXHINTS+=("Install iptables legacy tooling. Debian/Ubuntu: sudo apt install iptables; Fedora: sudo dnf install iptables")
-				;;
-			sysctl)
-				FIXHINTS+=("Install procps (sysctl). Debian/Ubuntu: sudo apt install procps; Fedora: sudo dnf install procps-ng")
 				;;
 			setpriv)
 				FIXHINTS+=("Install util-linux (setpriv). Debian/Ubuntu: sudo apt install util-linux; Fedora: sudo dnf install util-linux")
