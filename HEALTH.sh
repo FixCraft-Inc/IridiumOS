@@ -43,8 +43,29 @@ done
 
 # ----------------------------- HELPERS --------------------------------
 json_escape() { jq -Rsa . <<<"$1"; }  # requires jq (checked below)
-have() { command -v "$1" >/dev/null 2>&1; }
+have() { PATH="$PATH:/usr/sbin:/sbin" command -v "$1" >/dev/null 2>&1; }
 kv() { printf "%-26s %s\n" "$1" "$2"; }
+
+# Kernel access detection
+is_limited_kernel() {
+  # Writable sysctl?
+  test -w /proc/sys 2>/dev/null || return 0
+  # sysctl readable?
+  sysctl -n kernel.osrelease >/dev/null 2>&1 || return 0
+  # Try a harmless netlink op (may EPERM in locked containers)
+  ip link show >/dev/null 2>&1 || return 0
+  # CAP checks if available
+  if have capsh; then
+    capsh --print 2>/dev/null | grep -q 'cap_sys_admin' || return 0
+  fi
+  return 1
+}
+
+if is_limited_kernel; then
+  MODE="LIMITED"
+else
+  MODE="FULL"
+fi
 
 get_node_major() {
   local v; v="$(node -v 2>/dev/null || true)"   # v22.x
@@ -76,11 +97,9 @@ check_32bit_compile() {
   td="$(mktemp -d)"; f="$td/t.c"; out="$td/a.out"
   echo '#include <stdio.h>
 int main(){ puts("ok32"); return 0; }' > "$f"
-  if gcc -m32 "$f" -o "$out" >/tmp/health_m32.log 2>&1; then
+  if gcc -m32 "$f" -o "$out" 2>/tmp/health_m32.log; then
     rm -rf "$td"; return 0
   else
-    echo "${WARN} -m32 error:"
-    sed -n '1,15p' /tmp/health_m32.log | sed 's/^/    /'
     rm -rf "$td"; return 1
   fi
 }
@@ -143,16 +162,20 @@ for c in "${OPTIONAL_CMDS[@]}"; do
 	if have "$c"; then
 		echo "$(kv "$c (optional)" "${PASS} found")"; REPORT["cmd_$c"]="yes"
 	else
-		echo "$(kv "$c (optional)" "${WARN} missing")"; REPORT["cmd_$c"]="no"
+		if [ "$MODE" = "LIMITED" ]; then
+			echo "$(kv "$c (optional)" "${WARN} skipped (limited kernel access)")"; REPORT["cmd_$c"]="skipped"
+		else
+			echo "$(kv "$c (optional)" "${WARN} missing")"; REPORT["cmd_$c"]="no"
+		fi
 		case "$c" in
 			wg-quick)
-				FIXHINTS+=("Optional: Install wireguard-tools for network namespace VPN support. Debian/Ubuntu: sudo apt install wireguard-tools")
+				[ "$MODE" != "LIMITED" ] && FIXHINTS+=("Optional: Install wireguard-tools for network namespace VPN support. Debian/Ubuntu: sudo apt install wireguard-tools")
 				;;
 			iptables)
-				FIXHINTS+=("Optional: Install iptables for network namespace firewall support. Debian/Ubuntu: sudo apt install iptables")
+				[ "$MODE" != "LIMITED" ] && FIXHINTS+=("Optional: Install iptables for network namespace firewall support. Debian/Ubuntu: sudo apt install iptables. Note: May be in /usr/sbin (add to PATH or use full path)")
 				;;
 			sysctl)
-				FIXHINTS+=("Optional: Install procps (sysctl) for network namespace support. Debian/Ubuntu: sudo apt install procps")
+				[ "$MODE" != "LIMITED" ] && FIXHINTS+=("Optional: Install procps (sysctl) for network namespace support. Debian/Ubuntu: sudo apt install procps. Note: May be in /usr/sbin")
 				;;
 		esac
 	fi
@@ -260,15 +283,20 @@ fi
 REPORT[net_ok]="$net_ok"
 
 section "Summary"
+echo "${BLU}Mode: ${MODE}${RST}"
 if ((${#MISSING[@]})); then
-  echo "${FAIL} Missing commands: ${MISSING[*]}"
+  echo "${FAIL} Missing essential commands: ${MISSING[*]}"
 fi
 if ((${#FIXHINTS[@]})); then
   echo "${YEL}Hints:${RST}"
   for h in "${FIXHINTS[@]}"; do echo "  - $h"; done
 fi
 if [ "$overall_rc" -eq 0 ]; then
-  echo "${PASS} All essential checks passed. Ready to build."
+  if [ "$MODE" = "LIMITED" ]; then
+    echo "${PASS} All essential checks passed (LIMITED mode - kernel-dependent features skipped). Ready to build."
+  else
+    echo "${PASS} All essential checks passed. Ready to build."
+  fi
 else
   echo "${FAIL} Some essential checks failed. See above."
 fi
