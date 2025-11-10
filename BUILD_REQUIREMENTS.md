@@ -93,7 +93,7 @@ The following are installed automatically via `npm install`:
 - globals
 - prettier
 - rollup
-- workbox-cli
+- workbox-build
 
 ## Quick Installation Guide
 
