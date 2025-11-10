@@ -17,6 +17,16 @@ have()          { command -v "$1" >/dev/null 2>&1; }
 pkg_installed() { dpkg -s "$1" >/dev/null 2>&1; }
 ensure_pkg()    { pkg_installed "$1" || $SUDO apt-get install -y "$1"; }
 ensure_pkgs()   { for p in "$@"; do ensure_pkg "$p"; done; }
+ensure_docker_repo() {
+  if [ ! -f /etc/apt/sources.list.d/docker.list ]; then
+    log "Configuring Docker upstream APT repo"
+    $SUDO install -m 0755 -d /etc/apt/keyrings
+    [ -f /etc/apt/keyrings/docker.gpg ] || (curl -fsSL https://download.docker.com/linux/debian/gpg | $SUDO gpg --dearmor -o /etc/apt/keyrings/docker.gpg && $SUDO chmod a+r /etc/apt/keyrings/docker.gpg)
+    CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME")
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $CODENAME stable" | $SUDO tee /etc/apt/sources.list.d/docker.list >/dev/null
+    $SUDO apt-get update -y
+  fi
+}
 
 resolve_user() {
   if [ -n "${SUDO_USER-}" ] && [ "$SUDO_USER" != "root" ]; then printf '%s\n' "$SUDO_USER"; return; fi
@@ -115,17 +125,13 @@ if [ "${#to_purge[@]}" -gt 0 ]; then
   $SUDO apt-get -y autoremove --purge || true
 fi
 if ! have docker; then
-  log "Configuring Docker upstream APT repo"
-  $SUDO install -m 0755 -d /etc/apt/keyrings
-  [ -f /etc/apt/keyrings/docker.gpg ] || (curl -fsSL https://download.docker.com/linux/debian/gpg | $SUDO gpg --dearmor -o /etc/apt/keyrings/docker.gpg && $SUDO chmod a+r /etc/apt/keyrings/docker.gpg)
-  CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME")
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $CODENAME stable" | $SUDO tee /etc/apt/sources.list.d/docker.list >/dev/null
-  $SUDO apt-get update -y
+  ensure_docker_repo
   log "Installing Docker Engine + official plugins (buildx, compose)"
   ensure_pkgs docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 else
   log "Docker present: $(docker --version 2>/dev/null || echo)"
-  ensure_pkgs docker-buildx-plugin docker-compose-plugin
+  ensure_docker_repo
+  ensure_pkgs docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 fi
 # compose shim for legacy scripts
 if ! have docker-compose; then
@@ -137,10 +143,19 @@ EOF
 fi
 # enable+start daemon
 log "Enabling + starting Docker daemon"
-if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files | grep -q '^docker.service'; then
-  $SUDO systemctl enable --now docker || true
+if command -v systemctl >/dev/null 2>&1; then
+  if systemctl list-unit-files | grep -q '^docker.service'; then
+    $SUDO systemctl enable --now docker || true
+  else
+    warn "docker.service missing; reinstalling Docker Engine packages"
+    $SUDO apt-get install -y --reinstall docker-ce docker-ce-cli containerd.io || true
+    $SUDO systemctl daemon-reload || true
+    if systemctl list-unit-files | grep -q '^docker.service'; then
+      $SUDO systemctl enable --now docker || true
+    fi
+  fi
 else
-  log "systemctl docker unit unavailable; attempting 'service docker start'"
+  log "systemctl not available; attempting 'service docker start'"
   $SUDO service docker start || true
 fi
 # add user to group
