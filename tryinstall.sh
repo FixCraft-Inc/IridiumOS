@@ -4,6 +4,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# ========= OS-release early load =========
+if [ -f /etc/os-release ]; then . /etc/os-release; fi
+: "${VERSION_CODENAME:=$(lsb_release -sc 2>/dev/null || sed -n 's/^VERSION_CODENAME=//p' /etc/os-release 2>/dev/null || echo "")}"
+
 # ========= Pretty logs =========
 log()  { printf "\033[1;34m[+] %s\033[0m\n" "$*"; }
 warn() { printf "\033[1;33m[!] %s\033[0m\n" "$*"; }
@@ -13,17 +17,43 @@ err()  { printf "\033[1;31m[✘] %s\033[0m\n" "$*"; }
 if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; else SUDO=""; fi
 
 # ========= helpers =========
-have()          { command -v "$1" >/dev/null 2>&1; }
+have()          { PATH="$PATH:/usr/sbin:/sbin" command -v "$1" >/dev/null 2>&1; }
 pkg_installed() { dpkg -s "$1" >/dev/null 2>&1; }
 ensure_pkg()    { pkg_installed "$1" || $SUDO apt-get install -y "$1"; }
 ensure_pkgs()   { for p in "$@"; do ensure_pkg "$p"; done; }
+
+# ========= Kernel access detection =========
+is_limited_kernel() {
+  # Writable sysctl?
+  test -w /proc/sys 2>/dev/null || return 0
+  # sysctl readable?
+  sysctl -n kernel.osrelease >/dev/null 2>&1 || return 0
+  # Try a harmless netlink op (may EPERM in locked containers)
+  ip link show >/dev/null 2>&1 || return 0
+  # CAP checks if available
+  if have capsh; then
+    capsh --print 2>/dev/null | grep -q 'cap_sys_admin' || return 0
+  fi
+  return 1
+}
+
+if is_limited_kernel; then
+  MODE="LIMITED"
+  warn "Limited kernel access detected - skipping kernel-dependent features"
+else
+  MODE="FULL"
+fi
+
 ensure_docker_repo() {
   if [ ! -f /etc/apt/sources.list.d/docker.list ]; then
     log "Configuring Docker upstream APT repo"
     $SUDO install -m 0755 -d /etc/apt/keyrings
     [ -f /etc/apt/keyrings/docker.gpg ] || (curl -fsSL https://download.docker.com/linux/debian/gpg | $SUDO gpg --dearmor -o /etc/apt/keyrings/docker.gpg && $SUDO chmod a+r /etc/apt/keyrings/docker.gpg)
-    CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME")
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $CODENAME stable" | $SUDO tee /etc/apt/sources.list.d/docker.list >/dev/null
+    if [ -z "${VERSION_CODENAME}" ]; then
+      warn "VERSION_CODENAME empty; Docker upstream repo may fail"
+      return 1
+    fi
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian ${VERSION_CODENAME} stable" | $SUDO tee /etc/apt/sources.list.d/docker.list >/dev/null
     $SUDO apt-get update -y
   fi
 }
@@ -44,9 +74,30 @@ log "TARGET_USER=${TARGET_USER}"
 log "APT update"
 $SUDO apt-get update -y
 
+# ========= GnuPG ownership fix =========
+if [ -d "$HOME/.gnupg" ]; then
+  if [ -n "${SUDO_USER:-}" ]; then
+    TARGET_GNUPG_USER="$SUDO_USER"
+  else
+    TARGET_GNUPG_USER="$(id -un)"
+  fi
+  if [ "$TARGET_GNUPG_USER" != "root" ]; then
+    chown -R "$TARGET_GNUPG_USER:$TARGET_GNUPG_USER" "$HOME/.gnupg" 2>/dev/null || true
+    chmod 700 "$HOME/.gnupg" 2>/dev/null || true
+    find "$HOME/.gnupg" -type f -exec chmod 600 {} \; 2>/dev/null || true
+  fi
+fi
+
 # ========= Core tools =========
 log "Core deps (clang, inotify-tools, jq, uuid-runtime, binaryen, TLS, net utils)"
-ensure_pkgs clang inotify-tools jq uuid-runtime binaryen ca-certificates curl gnupg iproute2 iptables procps wireguard-tools
+CORE_PKGS=(clang inotify-tools jq uuid-runtime binaryen ca-certificates curl gnupg iproute2)
+if [ "$MODE" = "FULL" ]; then
+  CORE_PKGS+=(iptables procps wireguard-tools)
+else
+  # LIMITED mode: try to install but don't fail if unavailable
+  CORE_PKGS+=(iptables procps)
+fi
+ensure_pkgs "${CORE_PKGS[@]}"
 
 # ========= Java (>=11; prefer 21) =========
 if have java; then
@@ -125,13 +176,25 @@ if [ "${#to_purge[@]}" -gt 0 ]; then
   $SUDO apt-get -y autoremove --purge || true
 fi
 if ! have docker; then
-  ensure_docker_repo
-  log "Installing Docker Engine + official plugins (buildx, compose)"
-  ensure_pkgs docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  if [ "$MODE" = "LIMITED" ]; then
+    log "LIMITED mode: installing docker.io (Debian package)"
+    $SUDO apt-get install -y docker.io 2>/dev/null || warn "Docker install failed in LIMITED mode (optional)"
+  else
+    if ensure_docker_repo; then
+      log "Installing Docker Engine + official plugins (buildx, compose)"
+      ensure_pkgs docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    else
+      warn "Docker upstream repo failed; falling back to docker.io"
+      $SUDO apt-get install -y docker.io || warn "Docker install failed"
+    fi
+  fi
 else
   log "Docker present: $(docker --version 2>/dev/null || echo)"
-  ensure_docker_repo
-  ensure_pkgs docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  if [ "$MODE" = "FULL" ]; then
+    if ensure_docker_repo; then
+      ensure_pkgs docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    fi
+  fi
 fi
 # compose shim for legacy scripts
 if ! have docker-compose; then
@@ -141,22 +204,26 @@ if ! have docker-compose; then
 exec docker compose "$@"
 EOF
 fi
-# enable+start daemon
-log "Enabling + starting Docker daemon"
-if command -v systemctl >/dev/null 2>&1; then
-  if systemctl list-unit-files | grep -q '^docker.service'; then
-    $SUDO systemctl enable --now docker || true
-  else
-    warn "docker.service missing; reinstalling Docker Engine packages"
-    $SUDO apt-get install -y --reinstall docker-ce docker-ce-cli containerd.io || true
-    $SUDO systemctl daemon-reload || true
+# enable+start daemon (only in FULL mode by default)
+if [ "$MODE" = "FULL" ]; then
+  log "Enabling + starting Docker daemon"
+  if command -v systemctl >/dev/null 2>&1; then
     if systemctl list-unit-files | grep -q '^docker.service'; then
       $SUDO systemctl enable --now docker || true
+    else
+      warn "docker.service missing; reinstalling Docker Engine packages"
+      $SUDO apt-get install -y --reinstall docker-ce docker-ce-cli containerd.io 2>/dev/null || $SUDO apt-get install -y --reinstall docker.io 2>/dev/null || true
+      $SUDO systemctl daemon-reload || true
+      if systemctl list-unit-files | grep -q '^docker.service'; then
+        $SUDO systemctl enable --now docker || true
+      fi
     fi
+  else
+    log "systemctl not available; attempting 'service docker start'"
+    $SUDO service docker start || true
   fi
 else
-  log "systemctl not available; attempting 'service docker start'"
-  $SUDO service docker start || true
+  log "LIMITED mode: skipping Docker daemon auto-start (start manually if needed)"
 fi
 # add user to group
 if id -nG "$TARGET_USER" | tr ' ' '\n' | grep -qx docker; then
@@ -165,18 +232,20 @@ else
   log "Adding '$TARGET_USER' to docker group"
   $SUDO usermod -aG docker "$TARGET_USER" || true
 fi
-# **make it green now**: open a subshell with docker group and pre-warm
-log "Warming docker group in subshell (no logout needed)"
-sg docker -c 'docker version >/dev/null 2>&1 || true'
-sg docker -c 'docker info >/dev/null 2>&1 || true'
-sg docker -c 'docker run --rm hello-world >/dev/null 2>&1 || true'
-if ! sg docker -c 'docker info >/dev/null 2>&1'; then
-  warn "Docker daemon still unreachable; start it manually (sudo systemctl start docker) and rerun HEALTH.sh."
+# **make it green now**: open a subshell with docker group and pre-warm (only if daemon running)
+if [ "$MODE" = "FULL" ] && have docker; then
+  log "Warming docker group in subshell (no logout needed)"
+  sg docker -c 'docker version >/dev/null 2>&1 || true'
+  sg docker -c 'docker info >/dev/null 2>&1 || true'
+  sg docker -c 'docker run --rm hello-world >/dev/null 2>&1 || true'
+  if ! sg docker -c 'docker info >/dev/null 2>&1'; then
+    warn "Docker daemon still unreachable; start it manually (sudo systemctl start docker) and rerun HEALTH.sh."
+  fi
 fi
 
 # ========= Summary =========
 echo
-log "Summary:"
+log "Summary ($MODE mode):"
 have clang       && echo "  ✔ clang            $(clang --version | head -n1)" || echo "  ✘ clang"
 have java        && echo "  ✔ java             $(java -version 2>&1 | head -n1)" || echo "  ✘ java"
 have node        && echo "  ✔ node             $(node -v)" || echo "  ✘ node"
@@ -203,8 +272,12 @@ if [ -x "$SCRIPT_DIR/HEALTH.sh" ]; then
   if [ -n "$USER_HOME" ] && [ -d "$USER_HOME/.cargo/bin" ]; then
     EXTRA_PATH="$USER_HOME/.cargo/bin:"
   fi
-  sudo -u "$TARGET_USER" -H env PATH="${EXTRA_PATH}${BASE_PATH}" bash -c "cd \"$SCRIPT_DIR\" && ./HEALTH.sh --no-compile"
+  sudo -u "$TARGET_USER" -H env PATH="${EXTRA_PATH}${BASE_PATH}:/usr/sbin:/sbin" bash -c "cd \"$SCRIPT_DIR\" && ./HEALTH.sh --no-compile"
 fi
 
 echo
-log "Done. If you were just added to 'docker' group: subshell warmed; your next shell also has access after re-login."
+if [ "$MODE" = "LIMITED" ]; then
+  log "Done (LIMITED mode). Note: Kernel-dependent features were skipped. Docker daemon not auto-started."
+else
+  log "Done. If you were just added to 'docker' group: subshell warmed; your next shell also has access after re-login."
+fi
