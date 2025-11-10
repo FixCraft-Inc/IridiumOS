@@ -100,7 +100,7 @@ fi
 if [ "$need_node" -eq 1 ]; then
   log "Installing Node.js 22 via NodeSource"
   curl -fsSL https://deb.nodesource.com/setup_22.x | $SUDO -E bash -
-  ensure_pkg nodejs
+  $SUDO apt-get install -y nodejs
   log "Node now $(node -v 2>/dev/null || true)"
 else
   log "Node OK: $(node -v)"
