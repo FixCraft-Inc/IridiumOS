@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width,initial-scale=1">
+	<title>Firewall-chan Protects</title>
+	<style>
+		:root{
+			--bg:#060913;
+			--accent:#f472b6;
+			--accent2:#38bdf8;
+			--ink:#fdf3ff;
+			--muted:rgba(255,255,255,.75);
+		}
+		*{box-sizing:border-box}
+		body{
+			margin:0;
+			min-height:100vh;
+			display:flex;
+			align-items:center;
+			justify-content:center;
+			font-family:"Inter", "Segoe UI", system-ui, sans-serif;
+			color:var(--ink);
+			background:radial-gradient(circle at top,#151b34, var(--bg));
+			overflow:hidden;
+		}
+		body::before,
+		body::after{
+			content:"";
+			position:absolute;
+			width:520px;
+			height:520px;
+			background:radial-gradient(circle,#ff7ac3a6,transparent 70%);
+			filter:blur(45px);
+			z-index:0;
+		}
+		body::before{top:-220px;left:-120px}
+		body::after{bottom:-260px;right:-160px;background:radial-gradient(circle,#38bdf87c,transparent 70%)}
+		.card{
+			position:relative;
+			z-index:1;
+			width:min(420px,90vw);
+			background:rgba(9,14,25,0.85);
+			border:1px solid rgba(255,255,255,.12);
+			border-radius:24px;
+			padding:32px 28px;
+			box-shadow:0 25px 60px rgba(0,0,0,.4);
+			backdrop-filter:blur(12px);
+			text-align:center;
+		}
+		.badge{
+			display:inline-flex;
+			align-items:center;
+			gap:8px;
+			padding:6px 14px;
+			border-radius:999px;
+			background:rgba(248,113,113,.14);
+			color:#fecdd3;
+			font-size:13px;
+			letter-spacing:.4px;
+			text-transform:uppercase;
+		}
+		h1{
+			font-size:1.9rem;
+			margin:18px 0 6px;
+			letter-spacing:.5px;
+		}
+		p{
+			color:var(--muted);
+			line-height:1.6;
+		}
+		.subtitle{
+			margin:0 0 20px;
+			font-size:1rem;
+			font-weight:500;
+			color:#ffe4f4;
+		}
+		.mascot{
+			margin:22px auto 10px;
+			width:160px;
+			height:160px;
+			border-radius:30px;
+			background:linear-gradient(135deg,rgba(248,113,113,.6),rgba(59,130,246,.65));
+			position:relative;
+			box-shadow:0 18px 35px rgba(0,0,0,.35);
+		}
+		.mascot::after{
+			content:"UwU";
+			position:absolute;
+			inset:0;
+			font-size:2.5rem;
+			font-weight:700;
+			display:flex;
+			align-items:center;
+			justify-content:center;
+			color:white;
+			text-shadow:0 4px 12px rgba(0,0,0,.35);
+		}
+		.sparkles{
+			position:absolute;
+			inset:0;
+			pointer-events:none;
+		}
+		.sparkles span{
+			position:absolute;
+			width:6px;
+			height:6px;
+			border-radius:999px;
+			background:rgba(255,255,255,.8);
+			animation:float 6s ease-in-out infinite;
+		}
+		.sparkles span:nth-child(1){top:12%; left:18%; animation-delay:0s}
+		.sparkles span:nth-child(2){top:28%; right:16%; animation-delay:1.2s}
+		.sparkles span:nth-child(3){bottom:22%; left:25%; animation-delay:2.3s}
+		.sparkles span:nth-child(4){bottom:12%; right:30%; animation-delay:3.6s}
+		@keyframes float{
+			0%,100%{transform:translateY(0); opacity:.9}
+			50%{transform:translateY(-10px); opacity:.4}
+		}
+		.footer{
+			margin-top:26px;
+			font-size:.85rem;
+			color:rgba(255,255,255,.6);
+		}
+		a{
+			color:var(--accent2);
+			text-decoration:none;
+			font-weight:600;
+		}
+		a:hover{ text-decoration:underline }
+	</style>
+</head>
+<body>
+	<div class="sparkles">
+		<span></span><span></span><span></span><span></span>
+	</div>
+	<div class="card">
+		<div class="badge">Firewall-chan</div>
+		<h1>No sneaky shortcuts!</h1>
+		<p class="subtitle">{{MESSAGE}}</p>
+		<div class="mascot" aria-hidden="true"></div>
+		<p>
+			Our origin server only trusts traffic passing through the official gateways.
+			Please head back to the main site URL or reach out to your administrator
+			if you believe this is a mistake.
+		</p>
+		<p class="footer">
+			Need help? Contact your operator or <a href="mailto:support@example.com">support@example.com</a>
+		</p>
+	</div>
+</body>
+</html>

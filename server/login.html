@@ -5,12 +5,19 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>FixCraft - Login</title>
   <link rel="icon" type="image/png" href="/open/lock.png">
-
+  <!--LOGIN_CONFIG_SCRIPT-->
   <!-- GTM -->
-  <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});
-  var f=d.getElementsByTagName(s)[0],j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;
-  j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);})
-  (window,document,'script','dataLayer','GTM-K6227GPN');</script>
+  <script>
+  (function(){
+    const cfg = window.__LOGIN_PAGE_CONFIG__ || {};
+    const gtmId = cfg.gtmId;
+    if (!gtmId) return;
+    (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});
+      var f=d.getElementsByTagName(s)[0],j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;
+      j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);})
+    (window,document,'script','dataLayer',gtmId);
+  })();
+  </script>
 
   <!-- Cloudflare Turnstile (explicit render but VISIBLE) -->
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=cfOnload&render=explicit" async defer></script>
@@ -80,7 +87,7 @@
   </style>
 </head>
 <body class="obsidian">
-  <noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-K6227GPN" height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+  <!--GTM_NOSCRIPT-->
 
   <!-- BG split -->
   <div class="bg-split" id="bgSplit" aria-hidden="true">
@@ -121,6 +128,12 @@
     const permMsg=document.getElementById('permMsg');
     let permissionsReady=false;
     let latestPermissionIssues=[];
+    const loginConfig = window.__LOGIN_PAGE_CONFIG__ || {};
+    const TURNSTILE_SITE_KEY = loginConfig.turnstileSiteKey || "";
+    if (!TURNSTILE_SITE_KEY && msg) {
+      msg.textContent = 'Security verification is not configured. Please contact an administrator.';
+      msg.classList.add('show');
+    }
 
     const clearError = () => { if (errBox) errBox.classList.remove('show'); };
 
@@ -200,9 +213,10 @@
     // Robust Turnstile boot (works regardless of load order)
     let CF_WIDGET_ID = null;
     function renderTurnstile(){
+      if (!TURNSTILE_SITE_KEY) return;
       if (!window.turnstile || CF_WIDGET_ID) return;
       CF_WIDGET_ID = turnstile.render('#cfBox', {
-        sitekey: '0x4AAAAAAByPdxJl3NGDJfWw',
+        sitekey: TURNSTILE_SITE_KEY,
         theme: 'dark',
         size: 'flexible',          // visible widget
         appearance: 'always',      // show it
@@ -219,12 +233,14 @@
 
     // Block submit until there is a token; otherwise don’t spin forever
     form.addEventListener('submit', (e) => {
-      const token = CF_WIDGET_ID && turnstile.getResponse(CF_WIDGET_ID);
-      if (!token) {
-        e.preventDefault();
-        msg.classList.add('show');
-        document.getElementById('cfBox').scrollIntoView({ behavior:'smooth', block:'center' });
-        return;
+      if (TURNSTILE_SITE_KEY) {
+        const token = CF_WIDGET_ID && turnstile.getResponse(CF_WIDGET_ID);
+        if (!token) {
+          e.preventDefault();
+          msg.classList.add('show');
+          document.getElementById('cfBox').scrollIntoView({ behavior:'smooth', block:'center' });
+          return;
+        }
       }
       btn.disabled = true; btn.textContent = 'Logging in...';
     });

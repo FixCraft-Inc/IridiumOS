@@ -28,6 +28,11 @@ const VPN_DB_PATH = path.join(RUNTIME_DIR, "vpn_db.bin");
 const PROTON_DB_PATH = path.join(RUNTIME_DIR, "protonext.json");
 const RUNTIME_LOCK_PATH = path.join(RUNTIME_DIR, ".lock");
 const VPN_BLOCKED_HTML_PATH = path.join(__dirname, "vpn-blocked.html");
+const DIRECT_IP_BLOCKED_HTML_PATH = path.join(__dirname, "direct-ip-blocked.html");
+const DIRECT_IP_BLOCK_FALLBACK_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Access blocked</title><style>body{margin:0;font-family:system-ui;background:#05060a;color:#f5f5f5;display:flex;align-items:center;justify-content:center;min-height:100vh}main{max-width:460px;padding:32px;border-radius:18px;background:#0f111c;box-shadow:0 20px 55px rgba(0,0,0,.45);text-align:center;border:1px solid rgba(255,255,255,.1)}h1{margin:0 0 12px;font-size:1.9rem}p{margin:0 0 14px;line-height:1.5;color:#cbd5f5}</style></head><body><main><h1>Firewall-chan stopped you!</h1><p>{{MESSAGE}}</p><p>Please use the official hostname or contact your admin.</p></main></body></html>`;
+const DIRECT_IP_BLOCK_MESSAGE_PLACEHOLDER = /\{\{MESSAGE\}\}/g;
+const DIRECT_IP_DEFAULT_MESSAGE =
+	"Our cute firewall only trusts official hostnames.";
 const OPEN_DIR = path.join(ROOT_DIR, "open");
 const PUBLIC_CONFIG_PATH = path.join(ROOT_DIR, "public", "config.json");
 const DEFAULT_CONFIG_PATH = path.join(ROOT_DIR, "config.default.json");
@@ -36,6 +41,155 @@ const TWEB_PACKAGE_JSON_PATH = path.join(TWEB_DIR, "package.json");
 const TWEB_NODE_MODULES_DIR = path.join(TWEB_DIR, "node_modules");
 const VPN_DETECTION_ENABLED =
 	((process.env.VPN_DETECTION_ENABLED ?? "true").toLowerCase() !== "false");
+let LOGIN_HTML_TEMPLATE = "";
+try {
+	LOGIN_HTML_TEMPLATE = fs.readFileSync(LOGIN_HTML_PATH, "utf8");
+} catch (error) {
+	console.error(
+		`[boot] Failed to read login template at ${LOGIN_HTML_PATH}: ${
+			error instanceof Error ? error.message : error
+		}`,
+	);
+	process.exit(1);
+}
+const ENV_FILE_CANDIDATES = [
+	path.join(ROOT_DIR, ".env"),
+	path.join(__dirname, ".env"),
+];
+
+function pickEnvFileForWrites() {
+	for (const candidate of ENV_FILE_CANDIDATES) {
+		if (fs.existsSync(candidate)) {
+			return candidate;
+		}
+	}
+	return ENV_FILE_CANDIDATES[ENV_FILE_CANDIDATES.length - 1];
+}
+
+function upsertEnvValue(key, value) {
+	const targetPath = pickEnvFileForWrites();
+	let original = "";
+	try {
+		original = fs.existsSync(targetPath)
+			? fs.readFileSync(targetPath, "utf8")
+			: "";
+	} catch {
+		original = "";
+	}
+	const lines = original.split(/\r?\n/);
+	const matcher = new RegExp(`^\\s*${key}\\s*=`);
+	let replaced = false;
+	const nextLines = lines
+		.filter((line, idx, arr) => !(line === "" && idx === arr.length - 1))
+		.map((line) => {
+			if (matcher.test(line)) {
+				replaced = true;
+				return `${key}=${value}`;
+			}
+			return line;
+		});
+	if (!replaced) {
+		nextLines.push(`${key}=${value}`);
+	}
+	const payload = `${nextLines.join("\n")}\n`;
+	fs.writeFileSync(targetPath, payload, "utf8");
+	return targetPath;
+}
+
+function parseBoolean(value, defaultValue = false) {
+	if (value === undefined || value === null) return defaultValue;
+	const normalized = String(value).trim().toLowerCase();
+	if (!normalized) return defaultValue;
+	return !["0", "false", "off", "no"].includes(normalized);
+}
+
+function generateCookieSecret() {
+	return crypto.randomBytes(32).toString("base64url");
+}
+
+function isSecureCookieSecret(value) {
+	if (typeof value !== "string") return false;
+	const trimmed = value.trim();
+	if (trimmed.length < 43) return false; // ~32 bytes when base64url
+	if (/^very_random32bit$/i.test(trimmed)) return false;
+	if (/^change-me-fc_sso-secret$/i.test(trimmed)) return false;
+	return true;
+}
+
+function ensureCookieSecret() {
+	let current = process.env.FC_SSO_SECRET;
+	if (isSecureCookieSecret(current)) {
+		return current.trim();
+	}
+	const freshSecret = generateCookieSecret();
+	const targetPath = upsertEnvValue("FC_SSO_SECRET", freshSecret);
+	process.env.FC_SSO_SECRET = freshSecret;
+	console.warn(
+		`[auth] FC_SSO_SECRET was missing or weak. Generated a new 256-bit secret and stored it in ${targetPath}`,
+	);
+	return freshSecret;
+}
+
+const USE_CF = parseBoolean(process.env.USE_CF, true);
+const ENABLE_LOCAL_DDOS_GUARD = parseBoolean(
+	process.env.ENABLE_LOCAL_DDOS_GUARD ?? "true",
+	true,
+);
+const DEFAULT_CF_TLS_CERT = "/home/f1xgod/cloudf.pem";
+const DEFAULT_CF_TLS_KEY = "/home/f1xgod/cloudf.key";
+const DEFAULT_ORIGIN_TLS_CERT = "/home/f1xgod/fullchain.pem";
+const DEFAULT_ORIGIN_TLS_KEY = "/home/f1xgod/privkey.pem";
+const TLS_CERT_PATH =
+	process.env.TLS_CERT ||
+	(USE_CF ? DEFAULT_CF_TLS_CERT : DEFAULT_ORIGIN_TLS_CERT);
+const TLS_KEY_PATH =
+	process.env.TLS_KEY || (USE_CF ? DEFAULT_CF_TLS_KEY : DEFAULT_ORIGIN_TLS_KEY);
+const DROP_PRIVS_USER = process.env.DROP_PRIVS_USER || "nobody";
+const DROP_PRIVS_GROUP = process.env.DROP_PRIVS_GROUP || "nogroup";
+const SHOULD_DROP_ROOT =
+	typeof process.getuid === "function" && process.getuid() === 0;
+const HTTPS_PORT = Number(process.env.HTTPS_PORT || (USE_CF ? 3433 : 443));
+const HTTP_PORT = Number(process.env.HTTP_PORT || (USE_CF ? 8080 : 80));
+const ENABLE_HTTP_REDIRECT =
+	!USE_CF || parseBoolean(process.env.ENABLE_HTTP_REDIRECT, false);
+const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 15000);
+const RATE_LIMIT_MAX_REQUESTS = Number(
+	process.env.RATE_LIMIT_MAX_REQUESTS || 300,
+);
+const CLOUDFLARE_IPV4_CIDRS = [
+	"173.245.48.0/20",
+	"103.21.244.0/22",
+	"103.22.200.0/22",
+	"103.31.4.0/22",
+	"141.101.64.0/18",
+	"108.162.192.0/18",
+	"190.93.240.0/20",
+	"188.114.96.0/20",
+	"197.234.240.0/22",
+	"198.41.128.0/17",
+	"162.158.0.0/15",
+	"104.16.0.0/13",
+	"104.24.0.0/14",
+	"172.64.0.0/13",
+	"131.0.72.0/22",
+];
+const CLOUDFLARE_IPV6_CIDRS = [
+	"2400:cb00::/32",
+	"2606:4700::/32",
+	"2803:f800::/32",
+	"2405:b500::/32",
+	"2405:8100::/32",
+	"2a06:98c0::/29",
+	"2c0f:f248::/32",
+];
+const CLOUDFLARE_IPV4_RANGES = CLOUDFLARE_IPV4_CIDRS.map(parseIpv4Cidr).filter(
+	Boolean,
+);
+const CLOUDFLARE_IPV6_RANGES = CLOUDFLARE_IPV6_CIDRS.map(parseIpv6Cidr).filter(
+	Boolean,
+);
+const DIRECT_IP_HOST_PATTERN =
+	/^(\d{1,3}\.){3}\d{1,3}$|^\[?([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}\]?$/;
 
 
 const COOKIE_NAME = "fc_sso";
@@ -59,20 +213,28 @@ if (COOKIE_DOMAIN) {
 	console.log("[auth] COOKIE_DOMAIN not set. SSO cookie will be bound to the exact host.");
 }
 
-const COOKIE_SECRET = process.env.FC_SSO_SECRET || "change-me-fc_sso-secret";
-if (!process.env.FC_SSO_SECRET) {
-	console.warn(
-		"[auth] Falling back to built-in FC_SSO secret. Set FC_SSO_SECRET to override.",
-	);
-}
+const COOKIE_SECRET = ensureCookieSecret();
 
-const TURNSTILE_SECRET = process.env.TURNSTILE_SECRET || "";
+const TURNSTILE_SECRET = (process.env.TURNSTILE_SECRET || "").trim();
+const TURNSTILE_SITE_KEY = (process.env.TURNSTILE_SITE_KEY || "").trim();
+const GTM_CONTAINER_ID = (process.env.GTM_CONTAINER_ID || "").trim();
 const TURNSTILE_VERIFY_ENDPOINT =
 	"https://challenges.cloudflare.com/turnstile/v0/siteverify";
 if (!TURNSTILE_SECRET) {
 	console.warn(
 		"[auth] TURNSTILE_SECRET missing. Turnstile verification will reject all logins until it is set.",
 	);
+}
+if (!TURNSTILE_SITE_KEY) {
+	console.warn(
+		"[auth] TURNSTILE_SITE_KEY missing. Turnstile widget cannot render until it is set.",
+	);
+}
+if (USE_CF && (!TURNSTILE_SECRET || !TURNSTILE_SITE_KEY)) {
+	console.error(
+		"[boot] USE_CF=true requires both TURNSTILE_SECRET and TURNSTILE_SITE_KEY. Refusing to start.",
+	);
+	process.exit(1);
 }
 
 const AUTH_OPEN_PATHS = new Set([
@@ -130,6 +292,7 @@ const protonAddon = {
 	generatedAt: null,
 };
 let vpnBlockedTemplate = null;
+let directIpBlockedTemplate = null;
 
 const formatInteger = (value) => {
 	try {
@@ -138,6 +301,77 @@ const formatInteger = (value) => {
 		return String(value);
 	}
 };
+
+function escapeHtml(value) {
+	return String(value ?? "")
+		.replace(/&/g, "&amp;")
+		.replace(/</g, "&lt;")
+		.replace(/>/g, "&gt;")
+		.replace(/"/g, "&quot;")
+		.replace(/'/g, "&#39;");
+}
+
+function loadDirectIpBlockedTemplate() {
+	if (directIpBlockedTemplate) {
+		return directIpBlockedTemplate;
+	}
+	try {
+		const template = fs.readFileSync(DIRECT_IP_BLOCKED_HTML_PATH, "utf8");
+		if (template && template.includes("{{MESSAGE}}")) {
+			directIpBlockedTemplate = template;
+		} else {
+			console.warn(
+				`[security] Direct IP block page is missing the {{MESSAGE}} placeholder. Using fallback template.`,
+			);
+			directIpBlockedTemplate = DIRECT_IP_BLOCK_FALLBACK_HTML;
+		}
+	} catch (error) {
+		console.warn(
+			`[security] Could not read ${DIRECT_IP_BLOCKED_HTML_PATH}: ${
+				error instanceof Error ? error.message : error
+			}. Using fallback template.`,
+		);
+		directIpBlockedTemplate = DIRECT_IP_BLOCK_FALLBACK_HTML;
+	}
+	return directIpBlockedTemplate;
+}
+
+function sendHtmlResponse(res, statusCode, html) {
+	const payload = typeof html === "string" ? html : "";
+	if (res.headersSent) {
+		return;
+	}
+	if (typeof res.status === "function" && typeof res.send === "function") {
+		res.status(statusCode);
+		if (typeof res.type === "function") {
+			res.type("text/html; charset=utf-8");
+		} else if (typeof res.set === "function") {
+			res.set("Content-Type", "text/html; charset=utf-8");
+		} else if (typeof res.setHeader === "function") {
+			res.setHeader("Content-Type", "text/html; charset=utf-8");
+		}
+		res.send(payload);
+		return;
+	}
+	res.statusCode = statusCode;
+	if (typeof res.setHeader === "function") {
+		res.setHeader("Content-Type", "text/html; charset=utf-8");
+	}
+	res.end(payload);
+}
+
+function renderDirectIpBlockedPage(
+	res,
+	message = DIRECT_IP_DEFAULT_MESSAGE,
+	statusCode = 403,
+) {
+	const template = loadDirectIpBlockedTemplate();
+	const html = template.replace(
+		DIRECT_IP_BLOCK_MESSAGE_PLACEHOLDER,
+		escapeHtml(message || DIRECT_IP_DEFAULT_MESSAGE),
+	);
+	sendHtmlResponse(res, statusCode, html);
+}
 
 function ensureRuntimeDirectory(mode = 0o755) {
 	fs.mkdirSync(RUNTIME_DIR, { recursive: true, mode });
@@ -323,8 +557,63 @@ function parseHosts(input, fallbackCSV = "") {
 			.filter(Boolean),
 	);
 }
+
+const LOGIN_CONFIG_PLACEHOLDER = "<!--LOGIN_CONFIG_SCRIPT-->";
+const LOGIN_NOSCRIPT_PLACEHOLDER = "<!--GTM_NOSCRIPT-->";
+
+function sanitizeGtmId(value) {
+	if (typeof value !== "string") return "";
+	const trimmed = value.trim();
+	if (!trimmed) return "";
+	return trimmed.replace(/[^0-9A-Za-z_-]/g, "");
+}
+
+function buildLoginConfigScript(config) {
+	const payload = JSON.stringify(config ?? {});
+	return `<script>window.__LOGIN_PAGE_CONFIG__=Object.freeze(${payload});</script>`;
+}
+
+function buildGtmNoscriptSnippet(gtmId) {
+	const safeId = sanitizeGtmId(gtmId);
+	if (!safeId) return "";
+	return `<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=${safeId}" height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>`;
+}
+
+function buildLoginPageHtml() {
+	const runtimeConfig = {
+		turnstileSiteKey: TURNSTILE_SITE_KEY,
+		gtmId: GTM_CONTAINER_ID,
+	};
+	const script = buildLoginConfigScript(runtimeConfig);
+	const noscript = buildGtmNoscriptSnippet(runtimeConfig.gtmId);
+	return LOGIN_HTML_TEMPLATE.replace(LOGIN_CONFIG_PLACEHOLDER, script).replace(
+		LOGIN_NOSCRIPT_PLACEHOLDER,
+		noscript,
+	);
+}
+
+const LOGIN_PAGE_HTML = buildLoginPageHtml();
+
+function getFirstHost(hostSet) {
+	for (const host of hostSet) {
+		if (host) {
+			return host;
+		}
+	}
+	return null;
+}
+
 const TWEB_HOSTS = parseHosts(process.env.TWEB_HOSTS);
 const MAIN_HOSTS = parseHosts(process.env.MAIN_HOSTS);
+
+console.log(
+	`[security] Cloudflare proxy mode is ${
+		USE_CF ? "ENABLED" : "DISABLED"
+	}. Direct IP access is ${USE_CF ? "limited to Cloudflare edge" : "completely blocked"}.`,
+);
+console.log(
+	`[security] TLS material loaded from cert=${TLS_CERT_PATH} key=${TLS_KEY_PATH}`,
+);
 
 if (!fs.existsSync(PUBLIC_CONFIG_PATH)) {
 	try {
@@ -612,22 +901,48 @@ function getClientIp(req) {
 	return req.ip || req.socket?.remoteAddress || "";
 }
 
+function getPeerIp(req) {
+	return normalizeIpForLookup(req.socket?.remoteAddress || "");
+}
+
+function getRequestHost(req) {
+	return (req.headers.host || "").replace(/:\d+$/, "").toLowerCase();
+}
+
+function isCloudflareIp(ip) {
+	if (!ip) return false;
+	const ipv4Int = ipv4ToInt(ip);
+	if (ipv4Int !== null) {
+		return CLOUDFLARE_IPV4_RANGES.some(
+			(range) => ipv4Int >= range.start && ipv4Int <= range.end,
+		);
+	}
+	const ipv6Int = ipv6ToBigInt(ip);
+	if (ipv6Int !== null) {
+		return CLOUDFLARE_IPV6_RANGES.some(
+			(range) => ipv6Int >= range.start && ipv6Int <= range.end,
+		);
+	}
+	return false;
+}
+
+function isCloudflareRequest(req) {
+	return isCloudflareIp(getPeerIp(req));
+}
+
 function isDirectIpAccess(req) {
-	// Check if request is coming via Cloudflare
-	const cfRay = req.headers["cf-ray"];
-	const cfIpCountry = req.headers["cf-ipcountry"];
-	const cfConnectingIp = req.headers["cf-connecting-ip"];
-	
-	// If any CF headers are present, assume it's via Cloudflare
-	if (cfRay || cfIpCountry || cfConnectingIp) {
+	const host = getRequestHost(req);
+	if (!host) {
+		return true;
+	}
+	if (!DIRECT_IP_HOST_PATTERN.test(host)) {
 		return false;
 	}
-	
-	// Additional check: if host header contains an IP address instead of domain
-	const host = req.headers.host || "";
-	const ipPattern = /^(\d{1,3}\.){3}\d{1,3}(:\d+)?$|^\[?([0-9a-fA-F]{0,4}:){2,7}[0-9a-fA-F]{0,4}\]?(:\d+)?$/;
-	
-	return ipPattern.test(host.replace(/:\d+$/, ""));
+	// Allow Cloudflare to hit the origin IP when CF is enabled so only CF can reach it.
+	if (USE_CF && isCloudflareRequest(req)) {
+		return false;
+	}
+	return true;
 }
 
 function ipv4ToInt(ip) {
@@ -645,6 +960,33 @@ function ipv4ToInt(ip) {
 		value = (value << 8) + octet;
 	}
 	return value >>> 0;
+}
+
+function parseIpv4Cidr(cidr) {
+	if (typeof cidr !== "string") return null;
+	const [base, prefixRaw] = cidr.split("/");
+	const prefixLength = prefixRaw === undefined ? 32 : Number(prefixRaw);
+	const baseInt = ipv4ToInt(base);
+	if (baseInt === null) return null;
+	if (
+		Number.isNaN(prefixLength) ||
+		prefixLength < 0 ||
+		prefixLength > 32
+	) {
+		return null;
+	}
+	const normalizedBase = baseInt >>> 0;
+	if (prefixLength === 0) {
+		return { start: 0, end: 0xffffffff };
+	}
+	if (prefixLength === 32) {
+		return { start: normalizedBase, end: normalizedBase };
+	}
+	const hostBits = 32 - prefixLength;
+	const rangeSize = 2 ** hostBits;
+	const start = (normalizedBase >>> hostBits) << hostBits;
+	const end = (start + rangeSize - 1) >>> 0;
+	return { start: start >>> 0, end };
 }
 
 function expandIpv6Parts(parts) {
@@ -767,6 +1109,35 @@ function ipv6ToBigInt(ip) {
 		value = (value << 16n) + BigInt(parsed);
 	}
 	return value;
+}
+
+function parseIpv6Cidr(cidr) {
+	if (typeof cidr !== "string") return null;
+	const [base, prefixRaw] = cidr.split("/");
+	const prefixLength = prefixRaw === undefined ? 128 : Number(prefixRaw);
+	if (
+		Number.isNaN(prefixLength) ||
+		prefixLength < 0 ||
+		prefixLength > 128
+	) {
+		return null;
+	}
+	const baseInt = ipv6ToBigInt(base);
+	if (baseInt === null) {
+		return null;
+	}
+	if (prefixLength === 128) {
+		return { start: baseInt, end: baseInt };
+	}
+	if (prefixLength === 0) {
+		const max = (1n << 128n) - 1n;
+		return { start: 0n, end: max };
+	}
+	const hostBits = 128 - prefixLength;
+	const shift = BigInt(hostBits);
+	const start = (baseInt >> shift) << shift;
+	const end = start + (1n << shift) - 1n;
+	return { start, end };
 }
 
 function binarySearchExact32(values, providers, target) {
@@ -1200,7 +1571,8 @@ const vpnBlockingMiddleware = (req, res, next) => {
 	// Block direct IP access (not via Cloudflare)
 	if (isDirectIpAccess(req)) {
 		console.warn(`[security] Blocked direct IP access from ${getClientIp(req)}`);
-		return res.status(403).type("text/plain").send("Direct IP access not allowed");
+		renderDirectIpBlockedPage(res);
+		return;
 	}
 	
 	// Check for VPN IPs
@@ -1230,14 +1602,14 @@ function attachSessionMiddleware(req, _res, next) {
 }
 
 function registerLoginRoutes(app) {
-	app.get("/login", (req, res) => {
-		if (req.user) {
-			const target = safeRedirectTarget(req.query.next);
-			return res.redirect(target);
-		}
-		res.setHeader("Cache-Control", "no-store");
-		return res.sendFile(LOGIN_HTML_PATH);
-	});
+		app.get("/login", (req, res) => {
+			if (req.user) {
+				const target = safeRedirectTarget(req.query.next);
+				return res.redirect(target);
+			}
+			res.setHeader("Cache-Control", "no-store");
+			res.type("html").send(LOGIN_PAGE_HTML);
+		});
 
 	app.post("/login", async (req, res) => {
 		const body = req.body || {};
@@ -1316,10 +1688,58 @@ function createAuthGuard({ openPaths, openPrefixes }) {
 	};
 }
 
+function createRateLimitMiddleware({ windowMs, maxRequests }) {
+	const buckets = new Map();
+	const cleanupInterval = setInterval(() => {
+		const cutoff = Date.now() - windowMs * 2;
+		for (const [ip, bucket] of buckets) {
+			if (bucket.windowStart < cutoff) {
+				buckets.delete(ip);
+			}
+		}
+	}, windowMs);
+	if (typeof cleanupInterval.unref === "function") {
+		cleanupInterval.unref();
+	}
+	return function rateLimit(req, res, next) {
+		const clientIp = getClientIp(req) || "unknown";
+		const now = Date.now();
+		let bucket = buckets.get(clientIp);
+		if (!bucket) {
+			bucket = { windowStart: now, count: 0 };
+			buckets.set(clientIp, bucket);
+		}
+		if (now - bucket.windowStart >= windowMs) {
+			bucket.windowStart = now;
+			bucket.count = 0;
+		}
+		bucket.count += 1;
+		if (bucket.count > maxRequests) {
+			renderDirectIpBlockedPage(
+				res,
+				"Firewall-chan slowed you down. Please wait a moment and try again.",
+				429,
+			);
+			return;
+		}
+		next();
+	};
+}
+
+const localRateLimitMiddleware = ENABLE_LOCAL_DDOS_GUARD
+	? createRateLimitMiddleware({
+			windowMs: RATE_LIMIT_WINDOW_MS,
+			maxRequests: RATE_LIMIT_MAX_REQUESTS,
+		})
+	: null;
+
 function createProtectedHostApp({ openPaths = AUTH_OPEN_PATHS, openPrefixes = AUTH_OPEN_PREFIXES } = {}) {
 	const app = express();
 	app.set("trust proxy", true);
 	app.set("etag", false);
+	if (localRateLimitMiddleware) {
+		app.use(localRateLimitMiddleware);
+	}
 	app.use(securityHeadersMiddleware);
 	app.use(vpnBlockingMiddleware); // Add VPN blocking before everything else
 	app.use(express.urlencoded({ extended: false }));
@@ -1363,9 +1783,17 @@ function vhostDispatch(req, res, next) {
 	// Early VPN/Direct IP check at vhost level
 	if (isDirectIpAccess(req)) {
 		console.warn(`[security] Blocked direct IP access from ${getClientIp(req)} at vhost level`);
-		res.statusCode = 403;
-		res.setHeader("Content-Type", "text/plain; charset=utf-8");
-		res.end("Direct IP access not allowed");
+		renderDirectIpBlockedPage(res);
+		return;
+	}
+	if (USE_CF && !isCloudflareRequest(req)) {
+		console.warn(
+			`[security] Blocked non-Cloudflare request from ${getPeerIp(req) || "unknown"} while USE_CF=true`,
+		);
+		renderDirectIpBlockedPage(
+			res,
+			"Firewall-chan only trusts Cloudflare shields right now.",
+		);
 		return;
 	}
 	
@@ -1388,9 +1816,6 @@ function vhostDispatch(req, res, next) {
 	}
 	return mainApp(req, res, next);
 }
-// const httpPort = Number(process.env.PORT || 8000); // HTTP redirector
-const httpsPort = Number(process.env.HTTPS_PORT || 3433);
-
 // --- Debug app passthrough ---
 if (debugAppFolder) {
 	mainApp.use((req, res, next) => {
@@ -1447,25 +1872,111 @@ if (VPN_DETECTION_ENABLED) {
 	console.log("[security] 💤 Skipping VPN DB preparation (disabled).");
 }
 
-// --- TLS (Cloudflare origin key/cert) ---
-const TLS_KEY = "/home/f1xgod/cloudf.key";
-const TLS_CERT = "/home/f1xgod/cloudf.pem";
-
-const httpsOptions = {
-	key: fs.readFileSync(TLS_KEY),
-	cert: fs.readFileSync(TLS_CERT),
-	// If your cert isn't a full chain, add:
-	// ca: fs.readFileSync("/path/to/chain.pem"),
+const privilegeDropTracker = {
+	pending: 0,
+	dropped: false,
 };
+
+function trackServerForPrivilegeDrop(server) {
+	if (!SHOULD_DROP_ROOT || !server) {
+		return;
+	}
+	privilegeDropTracker.pending += 1;
+	server.once("listening", () => {
+		privilegeDropTracker.pending -= 1;
+		if (privilegeDropTracker.pending <= 0 && !privilegeDropTracker.dropped) {
+			dropRootPrivileges();
+		}
+	});
+}
+
+function dropRootPrivileges() {
+	if (!SHOULD_DROP_ROOT || privilegeDropTracker.dropped) {
+		return;
+	}
+	try {
+		if (typeof process.setgid === "function") {
+			process.setgid(DROP_PRIVS_GROUP);
+		}
+		if (typeof process.setuid === "function") {
+			process.setuid(DROP_PRIVS_USER);
+		}
+		privilegeDropTracker.dropped = true;
+		console.log(
+			`[security] Dropped root privileges to ${DROP_PRIVS_USER}:${DROP_PRIVS_GROUP}`,
+		);
+	} catch (error) {
+		console.error(
+			`[security] Failed to drop root privileges: ${
+				error instanceof Error ? error.message : error
+			}`,
+		);
+		process.exit(1);
+	}
+}
+
+function hardenHttpServer(server) {
+	if (!server) return;
+	server.keepAliveTimeout = 5000;
+	server.headersTimeout = 10000;
+	server.requestTimeout = 15000;
+	server.on("connection", (socket) => {
+		socket.setNoDelay(true);
+		socket.setTimeout(20000, () => socket.destroy());
+	});
+	server.on("clientError", (err, socket) => {
+		if (socket.writable) {
+			socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+		}
+		socket.destroy();
+	});
+}
+
+// --- TLS material selection ---
+function loadHttpsOptions() {
+	try {
+		return {
+			key: fs.readFileSync(TLS_KEY_PATH),
+			cert: fs.readFileSync(TLS_CERT_PATH),
+		};
+	} catch (error) {
+		console.error(
+			`[tls] Failed to read TLS files: ${
+				error instanceof Error ? error.message : error
+			}`,
+		);
+		process.exit(1);
+	}
+}
+
+const httpsOptions = loadHttpsOptions();
 
 // --- HTTPS primary ---
 const httpsServer = https.createServer(httpsOptions, vhostDispatch);
-httpsServer.listen(httpsPort, () => {
-	console.log(`[server] 🚀 HTTPS listening on :${httpsPort}`);
+hardenHttpServer(httpsServer);
+httpsServer.listen(HTTPS_PORT, () => {
+	console.log(
+		`[server] 🚀 HTTPS listening on :${HTTPS_PORT} (${USE_CF ? "Cloudflare origin" : "direct"})`,
+	);
 });
+trackServerForPrivilegeDrop(httpsServer);
 
 // WISP over WSS
 httpsServer.on("upgrade", (req, socket, head) => {
+	if (isDirectIpAccess(req)) {
+		console.warn(
+			`[security] Blocked direct IP WSS access from ${getClientIp(req)}`,
+		);
+		socket.destroy();
+		return;
+	}
+	if (USE_CF && !isCloudflareRequest(req)) {
+		console.warn(
+			`[security] Blocked non-Cloudflare WSS request from ${getPeerIp(req) || "unknown"}`,
+		);
+		socket.destroy();
+		return;
+	}
 	const host = (req.headers.host || "").replace(/:\d+$/, "").toLowerCase();
 	if (TWEB_HOSTS.has(host)) {
 		return socket.destroy(); // or route to tweb WS if you have one
@@ -1476,13 +1987,43 @@ httpsServer.on("upgrade", (req, socket, head) => {
 	wisp.routeRequest(req, socket, head);
 });
 
-// --- Optional HTTP → HTTPS redirector ---
-// http
-// 	.createServer((req, res) => {
-// 		const host = (req.headers.host || "").replace(/:\d+$/, "");
-// 		res.writeHead(301, { Location: `https://${host}${req.url || "/"}` });
-// 		res.end();
-// 	})
-// 	.listen(httpPort, () => {
-// 		console.log(`↪️  HTTP redirector on :${httpPort} → HTTPS :${httpsPort}`);
-// 	});
+let httpRedirectServer = null;
+	if (ENABLE_HTTP_REDIRECT) {
+		httpRedirectServer = http.createServer((req, res) => {
+			if (USE_CF && !isCloudflareRequest(req)) {
+				renderDirectIpBlockedPage(
+					res,
+					"Cloudflare gateway is required for this origin.",
+					403,
+				);
+				return;
+			}
+			if (isDirectIpAccess(req)) {
+				renderDirectIpBlockedPage(res);
+				return;
+			}
+		const hostCandidate =
+			getRequestHost(req) ||
+			getFirstHost(MAIN_HOSTS) ||
+			getFirstHost(TWEB_HOSTS);
+		if (!hostCandidate) {
+			res
+				.writeHead(421, {
+					"Content-Type": "text/plain; charset=utf-8",
+				})
+				.end("No hostname configured");
+			return;
+		}
+		const location = `https://${hostCandidate}${req.url || "/"}`;
+		res.writeHead(301, {
+			Location: location,
+			"Content-Type": "text/plain; charset=utf-8",
+		});
+		res.end("Redirecting to HTTPS");
+	});
+	hardenHttpServer(httpRedirectServer);
+	httpRedirectServer.listen(HTTP_PORT, () => {
+		console.log(`[server] ↪ HTTP redirector on :${HTTP_PORT} → HTTPS :${HTTPS_PORT}`);
+	});
+	trackServerForPrivilegeDrop(httpRedirectServer);
+}
