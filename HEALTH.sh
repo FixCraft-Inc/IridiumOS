@@ -50,8 +50,16 @@ get_node_major() {
   v="${v#v}"; echo "${v%%.*}"
 }
 get_java_major() {
-  local v; v="$(java -version 2>&1 | head -n1 | sed -E 's/.*version "([^"]+)".*/\1/')" || true
-  local major="${v%%.*}"
+  local raw version major
+  raw="$(java -version 2>&1 | head -n1)" || true
+  version="$(sed -nE 's/.*version "([^"]+)".*/\1/p' <<<"$raw")"
+  if [[ "$version" =~ ^1\.([0-9]+)\. ]]; then
+    major="${BASH_REMATCH[1]}"
+  elif [[ "$version" =~ ^([0-9]+) ]]; then
+    major="${BASH_REMATCH[1]}"
+  else
+    major=0
+  fi
   echo "$major"
 }
 mem_total_mb() { awk '/MemTotal:/ {printf "%.0f", $2/1024}' /proc/meminfo; }
@@ -131,7 +139,9 @@ if have node; then
     FIXHINTS+=("Upgrade Node to >= $REQ_NODE_MAJOR_MIN (NodeSource or your distro)")
   fi
 else
-  REPORT[node_ver_ok]="no"
+  echo "$(kv "Node >=$REQ_NODE_MAJOR_MIN" "${FAIL} not installed")"
+  REPORT[node_ver_ok]="no"; add_fail
+  FIXHINTS+=("Install Node.js >= $REQ_NODE_MAJOR_MIN (e.g., NodeSource 22.x)")
 fi
 
 # Java version
@@ -144,7 +154,9 @@ if have java; then
     FIXHINTS+=("Install OpenJDK $REQ_JAVA_MIN+: e.g., Debian 'default-jre', Arch 'jdk-openjdk', Fedora 'java-11-openjdk'")
   fi
 else
-  REPORT[java_ver_ok]="no"
+  echo "$(kv "Java >=$REQ_JAVA_MIN" "${FAIL} not installed")"
+  REPORT[java_ver_ok]="no"; add_fail
+  FIXHINTS+=("Install OpenJDK $REQ_JAVA_MIN+ (e.g., apt install openjdk-21-jdk)")
 fi
 
 section "Rust toolchain"
@@ -263,4 +275,3 @@ if [ "$JSON_OUT" -eq 1 ]; then
 fi
 
 exit "$overall_rc"
-

@@ -17,6 +17,15 @@ IridiumOS uses the features of a PWA (Progressive Web App) to make its environme
 IridiumOS shows as more of a proof‑of‑concept with what's possible on the modern web rather than an actual product. However, it proves useful in many actual cases and is a useful educational tool.
 ![](/assets/showcase.png)
 
+## Security & UX improvements over AnuraOS
+
+- **Origin hardening:** Cloudflare-aware TLS bootstrap, automatic certificate selection (Cloudflare origin vs. native `fullchain.pem`/`privkey.pem`), and zero-tolerance direct-IP blocking with a friendly “Firewall‑chan” page keep the server reachable only through approved hostnames.
+- **Runtime safeguards:** Local DDoS guard, tight HTTP/HTTPS timeouts, privilege dropping after binding privileged ports, and optional HTTP→HTTPS forwarding make it harder to knock over the origin even when Cloudflare is disabled.
+- **Human verification everywhere:** Turnstile secrets/site keys now live in `.env` (and are required whenever `USE_CF=true`). The login page consumes these values dynamically and can optionally inject Google Tag Manager IDs without embedding secrets in the static HTML.
+- **SSO secret hygiene:** `FC_SSO_SECRET` auto-rotates to a cryptographically random 32-byte value whenever it is missing or weak, and is persisted back into your `.env` so deployments never run with unsafe defaults.
+- **Automated VPN detection:** The bundled VPN/IP reputation database is hydrated at boot, and users see a clear explanation page when their IP is blocked.
+- **Developer ergonomics:** `HEALTH.sh` offers deterministic environment validation (with `--json` output), and `tryinstall.sh` can self-heal a Debian/Ubuntu host by installing Node ≥20, OpenJDK ≥11, multilib toolchains, Docker, and Rust targets even if only a single prerequisite originally failed.
+
 ## Development
 
 > [!IMPORTANT]  
@@ -47,6 +56,10 @@ IridiumOS shows as more of a proof‑of‑concept with what's possible on the mo
 - `jq`
 - `docker`
 - An x86(-64) Linux PC (`make rootfs-alpine` build depends on x86 specific tools)
+
+> [!TIP]
+> Run `./HEALTH.sh` after cloning to get a full compatibility report (or `./HEALTH.sh --json` for automation).  
+> On Debian/Ubuntu you can fix every failed check in one go with `./tryinstall.sh`, which installs/upgrades Node ≥20, OpenJDK ≥11, multilib toolchains, Docker, and the required Rust targets even if you only had a single red item.
 
 > [!NOTE]
 > You will have to install the required Rust toolchain by running `rustup target add wasm32-unknown-unknown` and also `rustup target add i686-unknown-linux-gnu` if you are planning to build v86 images.

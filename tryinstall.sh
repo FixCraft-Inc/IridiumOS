@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
 # ========= Pretty logs =========
 log()  { printf "\033[1;34m[+] %s\033[0m\n" "$*"; }
 warn() { printf "\033[1;33m[!] %s\033[0m\n" "$*"; }
@@ -167,6 +170,11 @@ else
 fi
 have docker-compose && echo "  ✔ docker-compose   shim OK" || echo "  ✘ docker-compose   (shim missing?)"
 
+if [ -x "$SCRIPT_DIR/HEALTH.sh" ]; then
+  echo
+  log "Verifying prerequisites with HEALTH.sh (--no-compile)"
+  sudo -u "$TARGET_USER" -H bash -c "cd \"$SCRIPT_DIR\" && ./HEALTH.sh --no-compile"
+fi
+
 echo
 log "Done. If you were just added to 'docker' group: subshell warmed; your next shell also has access after re-login."
-
