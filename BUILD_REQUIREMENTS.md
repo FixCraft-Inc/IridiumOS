@@ -269,7 +269,7 @@ docker run hello-world
 ## Minimum System Requirements
 
 - **CPU**: x86_64 processor (x86 for native builds)
-- **RAM**: 4GB minimum, 8GB+ recommended
+- **RAM**: 3GB minimum, 8GB+ recommended
 - **Disk Space**: ~5GB for full build with dependencies
 - **Network**: Required for initial dependency download
 
