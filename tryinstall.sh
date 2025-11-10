@@ -137,7 +137,12 @@ EOF
 fi
 # enable+start daemon
 log "Enabling + starting Docker daemon"
-$SUDO systemctl enable --now docker || true
+if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files | grep -q '^docker.service'; then
+  $SUDO systemctl enable --now docker || true
+else
+  log "systemctl docker unit unavailable; attempting 'service docker start'"
+  $SUDO service docker start || true
+fi
 # add user to group
 if id -nG "$TARGET_USER" | tr ' ' '\n' | grep -qx docker; then
   log "User '$TARGET_USER' already in docker group"
@@ -150,6 +155,9 @@ log "Warming docker group in subshell (no logout needed)"
 sg docker -c 'docker version >/dev/null 2>&1 || true'
 sg docker -c 'docker info >/dev/null 2>&1 || true'
 sg docker -c 'docker run --rm hello-world >/dev/null 2>&1 || true'
+if ! sg docker -c 'docker info >/dev/null 2>&1'; then
+  warn "Docker daemon still unreachable; start it manually (sudo systemctl start docker) and rerun HEALTH.sh."
+fi
 
 # ========= Summary =========
 echo
