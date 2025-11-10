@@ -25,6 +25,8 @@ v86timestamp
 Notes
 server/passkey
 server/.env
+server/.iridium-netns/
+server/secrets/
 .direnv
 result
 anuraos-types/

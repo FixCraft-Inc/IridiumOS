@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # --- CONFIG (override via env) ---
-: "${SIGN_KEY:=${HOME}/.ssh/id_ed25519.pub}"   # SSH public key or GPG key id
+: "${SIGN_KEY:=${HOME}/.ssh/id_ed25519GH.pub}"   # SSH public key or GPG key id
 : "${SIGN_MODE:=ssh}"                          # ssh|gpg (ssh recommended)
 : "${ALLOWED_SIGNERS:=}"                       # optional: ~/.config/git/allowed_signers for local G trust
 : "${BACKUP_DIR:=../BACKir}"

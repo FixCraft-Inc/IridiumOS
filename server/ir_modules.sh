@@ -105,7 +105,10 @@ function show_menu() {
   echo "  3) Enable (fetch assets)"
   echo "  4) Disable (remove assets)"
   echo
-  echo "5) Exit"
+  echo "Network Sandbox"
+  echo "  5) 🧊 Server namespace + WireGuard"
+  echo
+  echo "6) Exit"
   echo
 }
 
@@ -126,6 +129,9 @@ while true; do
       disable_vpn_detection
       ;;
     5)
+      ./modules/netns_guard.sh interactive
+      ;;
+    6)
       echo "Goodbye!"
       exit 0
       ;;

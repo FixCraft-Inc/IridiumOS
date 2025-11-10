@@ -7,7 +7,7 @@ REQ_NODE_MAJOR_MIN=20
 REQ_JAVA_MIN=11
 REQ_RAM_MB_MIN=4096
 REQ_DISK_MB_MIN=5120
-ESSENTIAL_CMDS=(make git gcc clang node npm rustup cargo java jq uuidgen wasm-opt inotifywait)
+ESSENTIAL_CMDS=(make git gcc clang node npm rustup cargo java jq uuidgen wasm-opt inotifywait ip iptables sysctl wg-quick setpriv)
 ALT_CMDS=(wget curl)
 RUST_TARGETS=(wasm32-unknown-unknown i686-unknown-linux-gnu)
 # ----------------------------------------------------------------------
@@ -115,11 +115,28 @@ REPORT[os]="$os_ok"; REPORT[arch]="$arch_good"
 
 section "Core Tools"
 for c in "${ESSENTIAL_CMDS[@]}"; do
-  if have "$c"; then
-    echo "$(kv "$c" "${PASS} found")"; REPORT["cmd_$c"]="yes"
-  else
-    echo "$(kv "$c" "${FAIL} missing")"; REPORT["cmd_$c"]="no"; MISSING+=("$c")
-  fi
+	if have "$c"; then
+		echo "$(kv "$c" "${PASS} found")"; REPORT["cmd_$c"]="yes"
+	else
+		echo "$(kv "$c" "${FAIL} missing")"; REPORT["cmd_$c"]="no"; MISSING+=("$c")
+		case "$c" in
+			wg-quick)
+				FIXHINTS+=("Install wireguard-tools (provides wg-quick). Debian/Ubuntu: sudo apt install wireguard-tools; Fedora: sudo dnf install wireguard-tools")
+				;;
+			ip)
+				FIXHINTS+=("Install iproute2 (provides the ip command). Debian/Ubuntu: sudo apt install iproute2; Fedora: sudo dnf install iproute")
+				;;
+			iptables)
+				FIXHINTS+=("Install iptables legacy tooling. Debian/Ubuntu: sudo apt install iptables; Fedora: sudo dnf install iptables")
+				;;
+			sysctl)
+				FIXHINTS+=("Install procps (sysctl). Debian/Ubuntu: sudo apt install procps; Fedora: sudo dnf install procps-ng")
+				;;
+			setpriv)
+				FIXHINTS+=("Install util-linux (setpriv). Debian/Ubuntu: sudo apt install util-linux; Fedora: sudo dnf install util-linux")
+				;;
+		esac
+	fi
 done
 
 ALT_OK="no"; for c in "${ALT_CMDS[@]}"; do if have "$c"; then ALT_OK="yes"; break; fi; done
