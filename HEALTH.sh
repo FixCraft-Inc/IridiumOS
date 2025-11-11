@@ -5,6 +5,21 @@ set -euo pipefail
 PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 export PATH
 
+if [ -f /etc/os-release ]; then . /etc/os-release; fi
+DISTRO_ID="${ID:-unknown}"
+DISTRO_PRETTY="${PRETTY_NAME:-$DISTRO_ID}"
+PKG_LABEL="unknown"
+if command -v apt-get >/dev/null 2>&1; then
+  PKG_LABEL="apt"
+elif command -v dnf >/dev/null 2>&1; then
+  PKG_LABEL="dnf"
+fi
+
+if [ "$DISTRO_ID" = "iridium" ]; then
+  echo "💘 Thanks For Picking Us"
+  echo "👉👈 FixCraft Inc. 😘"
+fi
+
 # ----------------------------- CONFIG ---------------------------------
 REQ_NODE_MAJOR_MIN=20
 REQ_JAVA_MIN=11
@@ -136,6 +151,12 @@ section "Platform"
 os_ok="no"; arch_good="no"
 if is_linux; then os_ok="yes"; echo "$(kv 'OS' "${PASS} Linux")"; else echo "$(kv 'OS' "${FAIL} Non-Linux")"; add_fail; fi
 if arch_ok; then arch_good="yes"; echo "$(kv 'CPU Arch' "${PASS} $(uname -m)")"; else echo "$(kv 'CPU Arch' "${FAIL} $(uname -m) (need x86_64/i686)")"; add_fail; fi
+echo "$(kv 'Distribution' "${PASS} ${DISTRO_PRETTY}")"
+if [ "$PKG_LABEL" = "unknown" ]; then
+  echo "$(kv 'Pkg manager' "${WARN} not detected (install apt or dnf)")"
+else
+  echo "$(kv 'Pkg manager' "${PASS} ${PKG_LABEL}")"
+fi
 REPORT[os]="$os_ok"; REPORT[arch]="$arch_good"
 
 section "Core Tools"

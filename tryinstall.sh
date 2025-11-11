@@ -107,18 +107,105 @@ else
   VERSION_CODENAME=""
 fi
 
+DISTRO_ID="${ID:-unknown}"
+DISTRO_LIKE="${ID_LIKE:-}"
+DISTRO_PRETTY="${PRETTY_NAME:-$DISTRO_ID}"
+
+if [ "$DISTRO_ID" = "iridium" ]; then
+  log "💘 Thanks For Picking Us"
+  log "👉👈 FixCraft Inc. 😘"
+fi
+
 # ========= sudo detection =========
 if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; else SUDO=""; fi
 
+detect_pkg_manager() {
+  if command -v apt-get >/dev/null 2>&1; then
+    PKG_MGR="apt"
+    PKG_LABEL="APT (Debian/Ubuntu style)"
+  elif command -v dnf >/dev/null 2>&1; then
+    PKG_MGR="dnf"
+    PKG_LABEL="DNF (Fedora/RHEL style)"
+  else
+    err "Unsupported package manager. Install apt-get or dnf."
+    exit 1
+  fi
+}
+
+detect_pkg_manager
+log "Detected distro: ${DISTRO_PRETTY} [pkg: ${PKG_LABEL}]"
+
 # ========= helpers =========
 have()          { PATH="$PATH:/usr/sbin:/sbin" command -v "$1" >/dev/null 2>&1; }
-pkg_installed() { dpkg -s "$1" >/dev/null 2>&1; }
-ensure_pkg()    { pkg_installed "$1" || $SUDO apt-get install -y "$1"; }
+pkg_installed() {
+  case "$PKG_MGR" in
+    apt) dpkg -s "$1" >/dev/null 2>&1 ;;
+    dnf) rpm -q "$1" >/dev/null 2>&1 ;;
+  esac
+}
+
+pkg_install() {
+  case "$PKG_MGR" in
+    apt) $SUDO apt-get install -y "$@" ;;
+    dnf) $SUDO dnf install -y "$@" ;;
+  esac
+}
+
+pkg_install_reinstall() {
+  case "$PKG_MGR" in
+    apt) $SUDO apt-get install -y --reinstall "$@" ;;
+    dnf) $SUDO dnf reinstall -y "$@" ;;
+  esac
+}
+
+pkg_remove() {
+  case "$PKG_MGR" in
+    apt) $SUDO apt-get remove -y --purge "$@" ;;
+    dnf) $SUDO dnf remove -y "$@" ;;
+  esac
+}
+
+pkg_autoremove() {
+  case "$PKG_MGR" in
+    apt) $SUDO apt-get autoremove -y --purge ;;
+    dnf) $SUDO dnf autoremove -y ;;
+  esac
+}
+
+pkg_update() {
+  case "$PKG_MGR" in
+    apt) $SUDO apt-get update -y ;;
+    dnf) $SUDO dnf makecache -y ;;
+  esac
+}
+
+pkg_arch() {
+  case "$PKG_MGR" in
+    apt) dpkg --print-architecture ;;
+    dnf) uname -m ;;
+  esac
+}
+
+install_first_available_pkg() {
+  local pkg
+  for pkg in "$@"; do
+    [ -n "$pkg" ] || continue
+    if pkg_installed "$pkg"; then
+      return 0
+    fi
+    if pkg_install "$pkg"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+ensure_pkg()    { pkg_installed "$1" || pkg_install "$1"; }
 ensure_pkgs()   { for p in "$@"; do ensure_pkg "$p"; done; }
 run_as_root()   { if [ -n "$SUDO" ]; then $SUDO "$@"; else "$@"; fi; }
 ensure_optional_pkg() {
   if pkg_installed "$1"; then return 0; fi
-  if $SUDO apt-get install -y "$1"; then
+  if pkg_install "$1"; then
     return 0
   else
     warn "Optional package '$1' failed to install (continuing)"
@@ -199,18 +286,17 @@ start_docker_without_systemd() {
   return 1
 }
 prune_docker_repo_if_needed() {
+  [ "$PKG_MGR" = "apt" ] || return
   if docker_healthy; then
     return
   fi
   local removed=0 file
-  for file in /etc/apt/sources.list.d/*.list; do
+  for file in /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
     [ -f "$file" ] || continue
     grep -q 'download.docker.com/linux/debian' "$file" || continue
-    if grep -Eq 'docker\.com/linux/debian[^\n]*(n/a|nodistro|unknown)( |$)' "$file"; then
-      warn "Docker missing/unhealthy; removing stale Docker repo entry: $file"
-      $SUDO rm -f "$file"
-      removed=1
-    fi
+    warn "Docker missing/unhealthy; removing stale Docker repo entry: $file"
+    $SUDO rm -f "$file"
+    removed=1
   done
   if [ "$removed" -gt 0 ]; then
     log "Removed invalid Docker APT repo entries; will reconfigure if needed"
@@ -222,12 +308,21 @@ prune_nodesource_repo_if_needed() {
     return
   fi
   local removed=0 file
-  for file in /etc/apt/sources.list.d/nodesource*.list; do
-    [ -f "$file" ] || continue
-    warn "Node.js missing/outdated; removing stale NodeSource repo entry: $file"
-    $SUDO rm -f "$file"
-    removed=1
-  done
+  if [ "$PKG_MGR" = "apt" ]; then
+    for file in /etc/apt/sources.list.d/nodesource*.list; do
+      [ -f "$file" ] || continue
+      warn "Node.js missing/outdated; removing stale NodeSource repo entry: $file"
+      $SUDO rm -f "$file"
+      removed=1
+    done
+  else
+    for file in /etc/yum.repos.d/nodesource*.repo; do
+      [ -f "$file" ] || continue
+      warn "Node.js missing/outdated; removing stale NodeSource repo entry: $file"
+      $SUDO rm -f "$file"
+      removed=1
+    done
+  fi
   if [ "$removed" -gt 0 ]; then
     log "Removed stale NodeSource repo entries; installer will recreate fresh ones"
   fi
@@ -257,24 +352,47 @@ else
 fi
 
 ensure_docker_repo() {
-  local docker_list="/etc/apt/sources.list.d/docker.list"
-  if [ -f "$docker_list" ]; then
-    if grep -Eq 'docker\.com/linux/debian (n/a|nodistro|unknown)' "$docker_list"; then
-      warn "Removing stale Docker repo entry with invalid codename"
-      $SUDO rm -f "$docker_list"
+  if [ "$PKG_MGR" = "apt" ]; then
+    local docker_list="/etc/apt/sources.list.d/docker.list"
+    local docker_src="/etc/apt/sources.list.d/docker.sources"
+    local docker_key="/etc/apt/keyrings/docker.asc"
+    [ -f "$docker_list" ] && $SUDO rm -f "$docker_list"
+    if [ ! -f "$docker_src" ]; then
+      log "Configuring Docker upstream APT repo (per official docs)"
+      $SUDO install -m 0755 -d /etc/apt/keyrings
+      curl -fsSL https://download.docker.com/linux/debian/gpg | $SUDO tee "$docker_key" >/dev/null
+      $SUDO chmod a+r "$docker_key"
+      local suite="${VERSION_CODENAME:-}"
+      [ -n "$suite" ] || suite="bookworm"
+      $SUDO tee "$docker_src" >/dev/null <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/debian
+Suites: $suite
+Components: stable
+Signed-By: $docker_key
+EOF
+      pkg_update
+    fi
+  else
+    local repo_flavor="fedora"
+    if printf '%s\n%s\n' "$DISTRO_ID" "$DISTRO_LIKE" | grep -qiE 'rhel|centos|almalinux|rocky|ol'; then
+      repo_flavor="centos"
+    fi
+    local repo_file="/etc/yum.repos.d/docker-ce.repo"
+    if [ ! -f "$repo_file" ]; then
+      log "Configuring Docker upstream DNF repo"
+      $SUDO tee "$repo_file" >/dev/null <<EOF
+[docker-ce-stable]
+name=Docker CE Stable - ${DISTRO_PRETTY}
+baseurl=https://download.docker.com/linux/${repo_flavor}/\$releasever/\$basearch/stable
+enabled=1
+gpgcheck=1
+gpgkey=https://download.docker.com/linux/${repo_flavor}/gpg
+EOF
+      pkg_update
     fi
   fi
-  if [ ! -f "$docker_list" ]; then
-    log "Configuring Docker upstream APT repo"
-    $SUDO install -m 0755 -d /etc/apt/keyrings
-    [ -f /etc/apt/keyrings/docker.gpg ] || (curl -fsSL https://download.docker.com/linux/debian/gpg | $SUDO gpg --dearmor -o /etc/apt/keyrings/docker.gpg && $SUDO chmod a+r /etc/apt/keyrings/docker.gpg)
-    if [ -z "${VERSION_CODENAME}" ]; then
-      warn "VERSION_CODENAME empty/invalid; cannot configure Docker upstream repo (falling back to docker.io)"
-      return 1
-    fi
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian ${VERSION_CODENAME} stable" | $SUDO tee "$docker_list" >/dev/null
-    $SUDO apt-get update -y
-  fi
+  return 0
 }
 
 resolve_user() {
@@ -293,9 +411,9 @@ log "TARGET_USER=${TARGET_USER}"
 prune_docker_repo_if_needed
 prune_nodesource_repo_if_needed
 
-# ========= APT refresh =========
-log "APT update"
-$SUDO apt-get update -y
+# ========= pkg refresh =========
+log "Refreshing package index"
+pkg_update
 
 # ========= GnuPG ownership fix =========
 if [ -d "$HOME/.gnupg" ]; then
@@ -312,12 +430,20 @@ if [ -d "$HOME/.gnupg" ]; then
 fi
 
 # ========= Core tools =========
-log "Core deps (clang, inotify-tools, jq, uuid-runtime, binaryen, TLS, net utils)"
-CORE_PKGS=(clang inotify-tools jq uuid-runtime binaryen ca-certificates curl gnupg iproute2)
+log "Core deps (compiler utils, TLS, net utils)"
+if [ "$PKG_MGR" = "apt" ]; then
+  CORE_PKGS=(clang inotify-tools jq uuid-runtime binaryen ca-certificates curl gnupg iproute2)
+else
+  CORE_PKGS=(clang inotify-tools jq util-linux binaryen ca-certificates curl gnupg2 iproute)
+fi
 ensure_pkgs "${CORE_PKGS[@]}"
 
 log "Network sandbox deps (iptables, procps/sysctl, wireguard-tools/wg-quick)"
-NETNS_PKGS=(iptables procps wireguard-tools)
+if [ "$PKG_MGR" = "apt" ]; then
+  NETNS_PKGS=(iptables procps wireguard-tools)
+else
+  NETNS_PKGS=(iptables procps-ng wireguard-tools)
+fi
 if [ "$MODE" = "FULL" ]; then
   ensure_pkgs "${NETNS_PKGS[@]}"
 else
@@ -326,24 +452,29 @@ else
 fi
 
 # ========= Java (>=11; prefer 21) =========
+if [ "$PKG_MGR" = "apt" ]; then
+  JAVA_PKG_CANDIDATES=(openjdk-21-jdk openjdk-17-jdk default-jdk)
+else
+  JAVA_PKG_CANDIDATES=(java-21-openjdk java-17-openjdk)
+fi
 if have java; then
   jmaj="$(java -version 2>&1 | sed -n '1{s/.*version \"\([0-9]*\).*/\1/p;q}')"
   if [ "${jmaj:-0}" -lt 11 ]; then
     warn "Java < 11 detected; upgrading to 21 (fallback 17)"
-    pkg_installed openjdk-21-jdk || ensure_pkg openjdk-21-jdk || ensure_pkg openjdk-17-jdk
+    install_first_available_pkg "${JAVA_PKG_CANDIDATES[@]}" || warn "Java install failed; please install manually"
   else
     log "Java OK: $(java -version 2>&1 | head -n1)"
   fi
 else
   log "Installing OpenJDK (21 preferred)"
-  pkg_installed openjdk-21-jdk || $SUDO apt-get install -y openjdk-21-jdk || ensure_pkg openjdk-17-jdk
+  install_first_available_pkg "${JAVA_PKG_CANDIDATES[@]}" || warn "Java install failed; please install manually"
 fi
 
 # ========= Rustup + targets =========
 if ! have rustup; then
-  log "Installing rustup (Debian package if available; else rustup.rs)"
-  if ! $SUDO apt-get install -y rustup; then
-    warn "rustup not in APT; using rustup.rs installer"
+  log "Installing rustup (system package if available; else rustup.rs)"
+  if ! pkg_install rustup; then
+    warn "rustup not in package repos; using rustup.rs installer"
     if [ "$TARGET_USER" != "root" ]; then
       sudo -u "$TARGET_USER" -H bash -c "curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal"
     else
@@ -367,13 +498,20 @@ if have rustup; then
 fi
 
 # ========= 32-bit toolchain (for -m32) =========
-log "32-bit toolchain: gcc-multilib g++-multilib libc6-dev-i386 lib32gcc-s1 lib32stdc++6"
-ensure_pkgs gcc-multilib g++-multilib libc6-dev-i386 lib32gcc-s1 lib32stdc++6
-# one-shot self-heal if still broken: try versioned multilib (best-effort)
-if ! ( printf 'int main(){}' > /tmp/t.c && gcc -m32 /tmp/t.c -o /tmp/t32 >/dev/null 2>&1 ); then
-  warn "-m32 smoke failed; attempting extra multilibs"
-  $SUDO apt-get install -y gcc-13-multilib g++-13-multilib || true
-  gcc -m32 /tmp/t.c -o /tmp/t32 -v || true
+if [ "$PKG_MGR" = "apt" ]; then
+  log "32-bit toolchain: gcc-multilib g++-multilib libc6-dev-i386 lib32gcc-s1 lib32stdc++6"
+  ensure_pkgs gcc-multilib g++-multilib libc6-dev-i386 lib32gcc-s1 lib32stdc++6
+  if ! ( printf 'int main(){}' > /tmp/t.c && gcc -m32 /tmp/t.c -o /tmp/t32 >/dev/null 2>&1 ); then
+    warn "-m32 smoke failed; attempting extra multilibs"
+    pkg_install gcc-13-multilib g++-13-multilib || true
+    gcc -m32 /tmp/t.c -o /tmp/t32 -v || true
+  fi
+else
+  log "32-bit toolchain: glibc-devel.i686 libstdc++-devel.i686 libgcc.i686"
+  ensure_pkgs glibc-devel.i686 libstdc++-devel.i686 libgcc.i686
+  if ! ( printf 'int main(){}' > /tmp/t.c && gcc -m32 /tmp/t.c -o /tmp/t32 >/dev/null 2>&1 ); then
+    warn "-m32 smoke failed; ensure GCC multilib packages are available on your distro"
+  fi
 fi
 
 # ========= Node.js >=20 (NodeSource 22 if needed) =========
@@ -386,32 +524,45 @@ fi
 [ "${FORCE_NODE_SETUP:-0}" = "1" ] && need_node=1
 if [ "$need_node" -eq 1 ]; then
   log "Installing Node.js 22 via NodeSource"
-  curl -fsSL https://deb.nodesource.com/setup_22.x | $SUDO -E bash -
-  $SUDO apt-get install -y nodejs
+  if [ "$PKG_MGR" = "apt" ]; then
+    NODE_SETUP_URL="https://deb.nodesource.com/setup_22.x"
+  else
+    NODE_SETUP_URL="https://rpm.nodesource.com/setup_22.x"
+  fi
+  curl -fsSL "$NODE_SETUP_URL" | $SUDO -E bash -
+  pkg_install nodejs
   log "Node now $(node -v 2>/dev/null || true)"
 else
   log "Node OK: $(node -v)"
 fi
 
 # ========= Docker (upstream) =========
-DEBIAN_BAD_PKGS=(docker-buildx docker-compose docker.io docker-doc podman-docker)
-to_purge=(); for p in "${DEBIAN_BAD_PKGS[@]}"; do pkg_installed "$p" && to_purge+=("$p"); done
+if [ "$PKG_MGR" = "apt" ]; then
+  LEGACY_DOCKER_PKGS=(docker-buildx docker-compose docker.io docker-doc podman-docker containerd containerd.io runc)
+else
+  LEGACY_DOCKER_PKGS=(docker docker-client docker-client-latest docker-common docker-latest docker-latest-logrotate docker-logrotate podman podman-docker containerd.io containerd runc)
+fi
+to_purge=(); for p in "${LEGACY_DOCKER_PKGS[@]}"; do pkg_installed "$p" && to_purge+=("$p"); done
 if [ "${#to_purge[@]}" -gt 0 ]; then
-  warn "Purging conflicting Debian Docker pkgs: ${to_purge[*]}"
-  $SUDO apt-get -y remove --purge "${to_purge[@]}" || true
-  $SUDO apt-get -y autoremove --purge || true
+  warn "Purging conflicting Docker pkgs: ${to_purge[*]}"
+  pkg_remove "${to_purge[@]}" || true
+  pkg_autoremove || true
 fi
 if ! have docker; then
-  if [ "$MODE" = "LIMITED" ]; then
+  if [ "$PKG_MGR" = "apt" ] && [ "$MODE" = "LIMITED" ]; then
     log "LIMITED mode: installing docker.io (Debian package)"
-    $SUDO apt-get install -y docker.io 2>/dev/null || warn "Docker install failed in LIMITED mode (optional)"
+    pkg_install docker.io || warn "Docker install failed in LIMITED mode (optional)"
   else
     if ensure_docker_repo; then
       log "Installing Docker Engine + official plugins (buildx, compose)"
       ensure_pkgs docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
     else
-      warn "Docker upstream repo failed; falling back to docker.io"
-      $SUDO apt-get install -y docker.io || warn "Docker install failed"
+      if [ "$PKG_MGR" = "apt" ]; then
+        warn "Docker upstream repo failed; falling back to docker.io"
+        pkg_install docker.io || warn "Docker install failed"
+      else
+        warn "Docker upstream repo failed; please install docker-ce packages manually."
+      fi
     fi
   fi
 else
@@ -422,17 +573,21 @@ else
     fi
   fi
 fi
-# compose shim for legacy scripts
-if ! have docker-compose; then
-  log "Installing docker-compose shim -> 'docker compose'"
-  $SUDO install -m 0755 /dev/stdin /usr/local/bin/docker-compose <<'EOF'
+if [ "${SKIP_DOCKER_COMPOSE:-0}" != "1" ]; then
+  # compose shim for legacy scripts
+  if ! have docker-compose; then
+    log "Installing docker-compose shim -> 'docker compose'"
+    $SUDO install -m 0755 /dev/stdin /usr/local/bin/docker-compose <<'EOF'
 #!/usr/bin/env bash
 exec docker compose "$@"
 EOF
-fi
-# ensure compose plugin packages even on Debian docker.io
-if pkg_installed docker.io || pkg_installed docker-ce; then
-  ensure_optional_pkgs docker-compose-plugin docker-buildx-plugin
+  fi
+  # ensure compose plugin packages even on Debian docker.io
+  if pkg_installed docker.io || pkg_installed docker-ce || pkg_installed docker; then
+    ensure_optional_pkgs docker-compose-plugin docker-buildx-plugin
+  fi
+else
+  warn "SKIP_DOCKER_COMPOSE=1 -> skipping compose plugin + shim installation"
 fi
 
 # enable+start daemon (detect init system)
@@ -446,7 +601,11 @@ if systemctl_usable; then
     run_as_root systemctl enable --now docker || warn "systemctl enable/start docker failed (check logs)"
   else
     warn "docker.service missing; reinstalling Docker Engine packages"
-    $SUDO apt-get install -y --reinstall docker-ce docker-ce-cli containerd.io 2>/dev/null || $SUDO apt-get install -y --reinstall docker.io 2>/dev/null || true
+    if [ "$PKG_MGR" = "apt" ]; then
+      pkg_install_reinstall docker-ce docker-ce-cli containerd.io || pkg_install_reinstall docker.io || true
+    else
+      pkg_install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || true
+    fi
     run_as_root systemctl daemon-reload || true
     if run_as_root systemctl list-unit-files | grep -q '^docker.service'; then
       run_as_root systemctl enable --now docker || warn "systemctl enable/start docker failed after reinstall"
