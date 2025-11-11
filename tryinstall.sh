@@ -170,7 +170,7 @@ detect_kernel_caps() {
   fi
   [ -x /usr/bin/newuidmap ] && KERNEL_UIDMAP="yes" || KERNEL_UIDMAP="no"
   [ -x /usr/bin/newgidmap ] && KERNEL_GIDMAP="yes" || KERNEL_GIDMAP="no"
-  if [ "$KERNEL_CGROUP_MODE" = "none" ] || { [ "$KERNEL_OVERLAY" = "no" ] && [ "$KERNEL_FUSE_OVERLAY" = "no" ]; }; then
+  if [ "$KERNEL_CGROUP_MODE" = "none" ] || { [ "$KERNEL_OVERLAY" = "no" ] && [ "$KERNEL_FUSE_OVERLAY" = "no" ]; } || [ "$KERNEL_USERNS" != "1" ]; then
     KERNEL_LIMITED=1
   else
     KERNEL_LIMITED=0
@@ -306,54 +306,72 @@ ensure_rootless_prereqs() {
   fi
 }
 
+ROOTLESS_ATTEMPTED=0
+ROOTLESS_SUCCESS=0
+
 install_rootless_docker() {
+  if [ "$ROOTLESS_ATTEMPTED" -eq 1 ]; then
+    return 0
+  fi
+  ROOTLESS_ATTEMPTED=1
+  if [ "$TARGET_USER" = "root" ]; then
+    warn "Rootless Docker requested but TARGET_USER is root; skipping rootless path."
+    return 1
+  fi
   log "Installing Docker in rootless mode for user '$TARGET_USER'"
   ensure_rootless_prereqs
   ensure_userns_enabled || true
-  local target_uid target_gid runtime_dir setup_script
-  target_uid="$(id -u "$TARGET_USER")"
-  target_gid="$(id -g "$TARGET_USER")"
-  runtime_dir="/run/user/$target_uid"
-  if [ -n "$SUDO" ]; then
-    $SUDO install -d -m 0700 -o "$target_uid" -g "$target_gid" "$runtime_dir" 2>/dev/null || true
+  if [ "$PKG_MGR" = "apt" ]; then
+    if ensure_docker_repo; then
+      ensure_optional_pkgs docker-ce-cli
+    fi
+  else
+    ensure_optional_pkgs docker-ce-cli
   fi
-  setup_script="$(mktemp)"
-  cat <<'EOS' > "$setup_script"
-#!/usr/bin/env bash
+  local runtime_dir="/run/user/$TARGET_UID"
+  run_as_root install -d -m 0700 -o "$TARGET_UID" -g "$TARGET_GID" "$runtime_dir" || true
+  local user_path="$TARGET_HOME/bin:$TARGET_HOME/.local/bin:$PATH"
+  if sudo -u "$TARGET_USER" -H env PATH="$user_path" XDG_RUNTIME_DIR="$runtime_dir" bash <<'EOS'; then
 set -euo pipefail
-TARGET_UID="$1"
 export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
-export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$TARGET_UID}"
 mkdir -p "$XDG_RUNTIME_DIR"
 if ! command -v dockerd-rootless-setuptool.sh >/dev/null 2>&1; then
   curl -fsSL https://get.docker.com/rootless | sh
 fi
 export DOCKER_HOST="unix://$XDG_RUNTIME_DIR/docker.sock"
 dockerd-rootless-setuptool.sh install >/dev/null 2>&1 || true
-dockerd-rootless-setuptool.sh status || true
 EOS
-  chmod +x "$setup_script"
-  if sudo -u "$TARGET_USER" -H "$setup_script" "$target_uid"; then
-    DOCKER_ROOTLESS_SOCKET="unix:///run/user/$target_uid/docker.sock"
-    log "Rootless Docker ready for $TARGET_USER. Socket: ${DOCKER_ROOTLESS_SOCKET}"
-    log "Add to your shell: export PATH=\"\$HOME/bin:\$HOME/.local/bin:\$PATH\" && export DOCKER_HOST=${DOCKER_ROOTLESS_SOCKET}"
-    if [ -d "$TARGET_HOME/bin" ]; then
-      PATH="$PATH:$TARGET_HOME/bin"
+    DOCKER_ROOTLESS_SOCKET="unix://$runtime_dir/docker.sock"
+    if sudo -u "$TARGET_USER" -H env PATH="$user_path" XDG_RUNTIME_DIR="$runtime_dir" DOCKER_HOST="$DOCKER_ROOTLESS_SOCKET" docker info >/dev/null 2>&1; then
+      ROOTLESS_SUCCESS=1
+      log "Rootless Docker daemon is reachable for $TARGET_USER (DOCKER_HOST=${DOCKER_ROOTLESS_SOCKET})"
+    else
+      warn "Rootless Docker installed but daemon not reachable yet. Start it manually with 'dockerd-rootless-setuptool.sh install' or check logs."
     fi
-    if [ -d "$TARGET_HOME/.local/bin" ]; then
-      PATH="$PATH:$TARGET_HOME/.local/bin"
-    fi
-    export PATH
+    local env_dir="$TARGET_HOME/.config/docker-rootless"
+    local env_file="$env_dir/env"
+    run_as_root install -d -m 0755 -o "$TARGET_UID" -g "$TARGET_GID" "$env_dir"
+    cat <<EOF | run_as_root tee "$env_file" >/dev/null
+export PATH="$TARGET_HOME/bin:$TARGET_HOME/.local/bin:\$PATH"
+export XDG_RUNTIME_DIR="$runtime_dir"
+export DOCKER_HOST="$DOCKER_ROOTLESS_SOCKET"
+EOF
+    run_as_root chown "$TARGET_UID:$TARGET_GID" "$env_file"
+    log "Rootless Docker env written to $env_file. Source it before running 'docker' as $TARGET_USER."
   else
-    warn "Rootless Docker install failed for $TARGET_USER. Check logs above."
+    warn "Rootless Docker install failed for $TARGET_USER. See logs above."
   fi
-  rm -f "$setup_script"
 }
 user_has_docker_access() {
   if [ "$TARGET_USER" = "root" ]; then
     return 0
   fi
-  sudo -u "$TARGET_USER" -H env PATH="$PATH" docker info >/dev/null 2>&1
+  local runtime_env=()
+  if [ -n "${DOCKER_ROOTLESS_SOCKET:-}" ]; then
+    runtime_env+=(DOCKER_HOST="$DOCKER_ROOTLESS_SOCKET")
+    runtime_env+=(XDG_RUNTIME_DIR="/run/user/$TARGET_UID")
+  fi
+  sudo -u "$TARGET_USER" -H env PATH="$PATH" "${runtime_env[@]}" docker info >/dev/null 2>&1
 }
 current_node_major() {
   if ! have node; then
@@ -474,6 +492,14 @@ else
   MODE="FULL"
 fi
 
+if [ "$KERNEL_LIMITED" -eq 1 ]; then
+  MODE="LIMITED"
+  warn "Kernel capabilities indicate LIMITED mode (cgroups/overlay/userns constraints)"
+fi
+if [ "$DOCKER_STRATEGY" = "ROOTLESS" ]; then
+  MODE="LIMITED"
+fi
+
 ensure_docker_repo() {
   if [ "$PKG_MGR" = "apt" ]; then
     local docker_list="/etc/apt/sources.list.d/docker.list"
@@ -533,6 +559,8 @@ TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 [ -n "$TARGET_HOME" ] || TARGET_HOME="/home/$TARGET_USER"
 TARGET_UID="$(id -u "$TARGET_USER")"
 TARGET_GID="$(id -g "$TARGET_USER")"
+PATH="$PATH:$TARGET_HOME/bin:$TARGET_HOME/.local/bin"
+export PATH
 
 # ========= Repo cleanup before refresh =========
 prune_docker_repo_if_needed
@@ -784,6 +812,12 @@ EOF
       warn "'sg' command missing; log out/in or run 'newgrp docker' manually to refresh membership."
     fi
   fi
+  if [ "$docker_ready" -eq 0 ]; then
+    warn "System Docker still unavailable; attempting rootless fallback"
+    DOCKER_STRATEGY="ROOTLESS"
+    MODE="LIMITED"
+    install_rootless_docker
+  fi
 fi
 
 # ========= Summary =========
@@ -805,6 +839,10 @@ else
   echo "  ✘ docker compose   missing"
 fi
 have docker-compose && echo "  ✔ docker-compose   shim OK" || echo "  ✘ docker-compose   (shim missing?)"
+if [ "${ROOTLESS_SUCCESS:-0}" -eq 1 ]; then
+  echo "  ℹ rootless docker  DOCKER_HOST=${DOCKER_ROOTLESS_SOCKET}"
+  echo "  ℹ source env       $TARGET_HOME/.config/docker-rootless/env"
+fi
 
 if [ -x "$SCRIPT_DIR/HEALTH.sh" ]; then
   echo

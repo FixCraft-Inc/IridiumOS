@@ -81,7 +81,11 @@ humanize_mb() {
     else printf "%.1f%s\n", val, unit
   }'
 }
-print_line() { [ "$HUMAN_MODE" -eq 0 ] && printf "%s\n" "$1"; }
+print_line() {
+  if [ "$HUMAN_MODE" -eq 0 ]; then
+    printf "%s\n" "$1"
+  fi
+}
 join_by() { local IFS="$1"; shift; echo "$*"; }
 missing_suffix() {
   if [ "$#" -gt 0 ]; then
