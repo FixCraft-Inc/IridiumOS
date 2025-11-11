@@ -135,6 +135,63 @@ detect_pkg_manager() {
 detect_pkg_manager
 log "Detected distro: ${DISTRO_PRETTY} [pkg: ${PKG_LABEL}]"
 
+KERNEL_LIMITED=0
+DOCKER_STRATEGY="SYSTEM"
+KERNEL_USERNS=0
+KERNEL_CGROUP_MODE="unknown"
+KERNEL_OVERLAY="no"
+KERNEL_FUSE_OVERLAY="no"
+KERNEL_SLIRP="no"
+KERNEL_UIDMAP="no"
+KERNEL_GIDMAP="no"
+DOCKER_ROOTLESS_SOCKET=""
+
+detect_kernel_caps() {
+  KERNEL_USERNS="$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || echo 0)"
+  if mount | grep -q 'type cgroup2'; then
+    KERNEL_CGROUP_MODE="v2"
+  elif mount | grep -q 'type cgroup '; then
+    KERNEL_CGROUP_MODE="v1"
+  else
+    KERNEL_CGROUP_MODE="none"
+  fi
+  if [ -r /proc/filesystems ] && grep -qw overlay /proc/filesystems; then
+    KERNEL_OVERLAY="yes"
+  fi
+  if command -v fuse-overlayfs >/dev/null 2>&1; then
+    KERNEL_FUSE_OVERLAY="yes"
+  else
+    KERNEL_FUSE_OVERLAY="no"
+  fi
+  if command -v slirp4netns >/dev/null 2>&1; then
+    KERNEL_SLIRP="yes"
+  else
+    KERNEL_SLIRP="no"
+  fi
+  [ -x /usr/bin/newuidmap ] && KERNEL_UIDMAP="yes" || KERNEL_UIDMAP="no"
+  [ -x /usr/bin/newgidmap ] && KERNEL_GIDMAP="yes" || KERNEL_GIDMAP="no"
+  if [ "$KERNEL_CGROUP_MODE" = "none" ] || { [ "$KERNEL_OVERLAY" = "no" ] && [ "$KERNEL_FUSE_OVERLAY" = "no" ]; }; then
+    KERNEL_LIMITED=1
+  else
+    KERNEL_LIMITED=0
+  fi
+  if [ "${FORCE_DOCKER_ROOTLESS:-0}" = "1" ]; then
+    DOCKER_STRATEGY="ROOTLESS"
+  elif [ "$KERNEL_LIMITED" -eq 1 ]; then
+    DOCKER_STRATEGY="ROOTLESS"
+  else
+    DOCKER_STRATEGY="SYSTEM"
+  fi
+  log "Kernel caps: cgroups=${KERNEL_CGROUP_MODE}, overlay=${KERNEL_OVERLAY}, fuse-overlayfs=${KERNEL_FUSE_OVERLAY}, userns_clone=${KERNEL_USERNS}, slirp4netns=${KERNEL_SLIRP}"
+  if [ "$DOCKER_STRATEGY" = "ROOTLESS" ]; then
+    warn "Kernel limitations detected or FORCE_DOCKER_ROOTLESS=1 -> using rootless Docker plan"
+  else
+    log "Kernel supports full Docker (system daemon path)"
+  fi
+}
+
+detect_kernel_caps
+
 # ========= helpers =========
 have()          { PATH="$PATH:/usr/sbin:/sbin" command -v "$1" >/dev/null 2>&1; }
 pkg_installed() {
@@ -225,6 +282,72 @@ wait_for_docker() {
     i=$((i+1))
   done
   return 1
+}
+ensure_userns_enabled() {
+  if [ "$KERNEL_USERNS" = "1" ]; then
+    return 0
+  fi
+  if [ -z "$SUDO" ]; then
+    warn "kernel.unprivileged_userns_clone=0 and no sudo available to enable rootless mode"
+    return 1
+  fi
+  warn "Enabling kernel.unprivileged_userns_clone=1 for rootless/container tooling"
+  echo 'kernel.unprivileged_userns_clone=1' | $SUDO tee /etc/sysctl.d/99-userns.conf >/dev/null || true
+  $SUDO sysctl -w kernel.unprivileged_userns_clone=1 >/dev/null 2>&1 || true
+  $SUDO sysctl --system >/dev/null 2>&1 || true
+  KERNEL_USERNS="1"
+}
+
+ensure_rootless_prereqs() {
+  if [ "$PKG_MGR" = "apt" ]; then
+    ensure_pkgs uidmap fuse-overlayfs slirp4netns dbus-user-session
+  else
+    ensure_pkgs uidmap fuse-overlayfs slirp4netns shadow-utils
+  fi
+}
+
+install_rootless_docker() {
+  log "Installing Docker in rootless mode for user '$TARGET_USER'"
+  ensure_rootless_prereqs
+  ensure_userns_enabled || true
+  local target_uid target_gid runtime_dir setup_script
+  target_uid="$(id -u "$TARGET_USER")"
+  target_gid="$(id -g "$TARGET_USER")"
+  runtime_dir="/run/user/$target_uid"
+  if [ -n "$SUDO" ]; then
+    $SUDO install -d -m 0700 -o "$target_uid" -g "$target_gid" "$runtime_dir" 2>/dev/null || true
+  fi
+  setup_script="$(mktemp)"
+  cat <<'EOS' > "$setup_script"
+#!/usr/bin/env bash
+set -euo pipefail
+TARGET_UID="$1"
+export PATH="$HOME/bin:$HOME/.local/bin:$PATH"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$TARGET_UID}"
+mkdir -p "$XDG_RUNTIME_DIR"
+if ! command -v dockerd-rootless-setuptool.sh >/dev/null 2>&1; then
+  curl -fsSL https://get.docker.com/rootless | sh
+fi
+export DOCKER_HOST="unix://$XDG_RUNTIME_DIR/docker.sock"
+dockerd-rootless-setuptool.sh install >/dev/null 2>&1 || true
+dockerd-rootless-setuptool.sh status || true
+EOS
+  chmod +x "$setup_script"
+  if sudo -u "$TARGET_USER" -H "$setup_script" "$target_uid"; then
+    DOCKER_ROOTLESS_SOCKET="unix:///run/user/$target_uid/docker.sock"
+    log "Rootless Docker ready for $TARGET_USER. Socket: ${DOCKER_ROOTLESS_SOCKET}"
+    log "Add to your shell: export PATH=\"\$HOME/bin:\$HOME/.local/bin:\$PATH\" && export DOCKER_HOST=${DOCKER_ROOTLESS_SOCKET}"
+    if [ -d "$TARGET_HOME/bin" ]; then
+      PATH="$PATH:$TARGET_HOME/bin"
+    fi
+    if [ -d "$TARGET_HOME/.local/bin" ]; then
+      PATH="$PATH:$TARGET_HOME/.local/bin"
+    fi
+    export PATH
+  else
+    warn "Rootless Docker install failed for $TARGET_USER. Check logs above."
+  fi
+  rm -f "$setup_script"
 }
 user_has_docker_access() {
   if [ "$TARGET_USER" = "root" ]; then
@@ -406,6 +529,10 @@ resolve_user() {
 }
 TARGET_USER="$(resolve_user)"
 log "TARGET_USER=${TARGET_USER}"
+TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
+[ -n "$TARGET_HOME" ] || TARGET_HOME="/home/$TARGET_USER"
+TARGET_UID="$(id -u "$TARGET_USER")"
+TARGET_GID="$(id -g "$TARGET_USER")"
 
 # ========= Repo cleanup before refresh =========
 prune_docker_repo_if_needed
@@ -536,7 +663,7 @@ else
   log "Node OK: $(node -v)"
 fi
 
-# ========= Docker (upstream) =========
+# ========= Docker strategy =========
 if [ "$PKG_MGR" = "apt" ]; then
   LEGACY_DOCKER_PKGS=(docker-buildx docker-compose docker.io docker-doc podman-docker containerd containerd.io runc)
 else
@@ -548,109 +675,114 @@ if [ "${#to_purge[@]}" -gt 0 ]; then
   pkg_remove "${to_purge[@]}" || true
   pkg_autoremove || true
 fi
-if ! have docker; then
-  if [ "$PKG_MGR" = "apt" ] && [ "$MODE" = "LIMITED" ]; then
-    log "LIMITED mode: installing docker.io (Debian package)"
-    pkg_install docker.io || warn "Docker install failed in LIMITED mode (optional)"
-  else
-    if ensure_docker_repo; then
-      log "Installing Docker Engine + official plugins (buildx, compose)"
-      ensure_pkgs docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+if [ "$DOCKER_STRATEGY" = "ROOTLESS" ]; then
+  install_rootless_docker
+else
+  if ! have docker; then
+    if [ "$PKG_MGR" = "apt" ] && [ "$MODE" = "LIMITED" ]; then
+      log "LIMITED mode: installing docker.io (Debian package)"
+      pkg_install docker.io || warn "Docker install failed in LIMITED mode (optional)"
     else
-      if [ "$PKG_MGR" = "apt" ]; then
-        warn "Docker upstream repo failed; falling back to docker.io"
-        pkg_install docker.io || warn "Docker install failed"
+      if ensure_docker_repo; then
+        log "Installing Docker Engine + official plugins (buildx, compose)"
+        ensure_pkgs docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
       else
-        warn "Docker upstream repo failed; please install docker-ce packages manually."
+        if [ "$PKG_MGR" = "apt" ]; then
+          warn "Docker upstream repo failed; falling back to docker.io"
+          pkg_install docker.io || warn "Docker install failed"
+        else
+          warn "Docker upstream repo failed; please install docker-ce packages manually."
+        fi
+      fi
+    fi
+  else
+    log "Docker present: $(docker --version 2>/dev/null || echo)"
+    if [ "$MODE" = "FULL" ]; then
+      if ensure_docker_repo; then
+        ensure_pkgs docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
       fi
     fi
   fi
-else
-  log "Docker present: $(docker --version 2>/dev/null || echo)"
-  if [ "$MODE" = "FULL" ]; then
-    if ensure_docker_repo; then
-      ensure_pkgs docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-    fi
-  fi
-fi
-if [ "${SKIP_DOCKER_COMPOSE:-0}" != "1" ]; then
-  # compose shim for legacy scripts
-  if ! have docker-compose; then
-    log "Installing docker-compose shim -> 'docker compose'"
-    $SUDO install -m 0755 /dev/stdin /usr/local/bin/docker-compose <<'EOF'
+
+  if [ "${SKIP_DOCKER_COMPOSE:-0}" != "1" ]; then
+    if ! have docker-compose; then
+      log "Installing docker-compose shim -> 'docker compose'"
+      $SUDO install -m 0755 /dev/stdin /usr/local/bin/docker-compose <<'EOF'
 #!/usr/bin/env bash
 exec docker compose "$@"
 EOF
+    fi
+    if pkg_installed docker.io || pkg_installed docker-ce || pkg_installed docker; then
+      ensure_optional_pkgs docker-compose-plugin docker-buildx-plugin
+    fi
+  else
+    warn "SKIP_DOCKER_COMPOSE=1 -> skipping compose plugin + shim installation"
   fi
-  # ensure compose plugin packages even on Debian docker.io
-  if pkg_installed docker.io || pkg_installed docker-ce || pkg_installed docker; then
-    ensure_optional_pkgs docker-compose-plugin docker-buildx-plugin
-  fi
-else
-  warn "SKIP_DOCKER_COMPOSE=1 -> skipping compose plugin + shim installation"
-fi
 
-# enable+start daemon (detect init system)
-log "Ensuring Docker daemon is enabled + running"
-if [ "$MODE" = "LIMITED" ]; then
-  warn "LIMITED mode detected; docker service start may fail if cgroup/ns control is blocked"
-fi
-if systemctl_usable; then
-  log "systemd detected; enabling docker.service"
-  if run_as_root systemctl list-unit-files | grep -q '^docker.service'; then
-    run_as_root systemctl enable --now docker || warn "systemctl enable/start docker failed (check logs)"
-  else
-    warn "docker.service missing; reinstalling Docker Engine packages"
-    if [ "$PKG_MGR" = "apt" ]; then
-      pkg_install_reinstall docker-ce docker-ce-cli containerd.io || pkg_install_reinstall docker.io || true
-    else
-      pkg_install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || true
-    fi
-    run_as_root systemctl daemon-reload || true
+  log "Ensuring Docker daemon is enabled + running"
+  if [ "$MODE" = "LIMITED" ]; then
+    warn "LIMITED mode detected; docker service start may fail if cgroup/ns control is blocked"
+  fi
+  if systemctl_usable; then
+    log "systemd detected; enabling docker.service"
     if run_as_root systemctl list-unit-files | grep -q '^docker.service'; then
-      run_as_root systemctl enable --now docker || warn "systemctl enable/start docker failed after reinstall"
-    fi
-  fi
-else
-  pid1_name="$(cat /proc/1/comm 2>/dev/null || echo "unknown")"
-  warn "systemd not detected (PID 1 = ${pid1_name}). Using legacy Docker start."
-  if ! start_docker_without_systemd; then
-    warn "Legacy Docker start methods failed; start dockerd manually."
-  fi
-fi
-docker_ready=0
-if have docker; then
-  if wait_for_docker 12 2; then
-    docker_ready=1
-    log "Docker daemon is reachable"
-  else
-    warn "Docker daemon still unreachable after waiting; check 'sudo systemctl status docker' or dockerd logs"
-  fi
-fi
-if [ "$docker_ready" -eq 1 ]; then
-  if ! user_has_docker_access; then
-    warn "Docker is running but current shell for '$TARGET_USER' lacks group access. Run 'newgrp docker' or start a fresh shell."
-  fi
-fi
-# add user to group
-if id -nG "$TARGET_USER" | tr ' ' '\n' | grep -qx docker; then
-  log "User '$TARGET_USER' already in docker group"
-else
-  log "Adding '$TARGET_USER' to docker group"
-  $SUDO usermod -aG docker "$TARGET_USER" || true
-fi
-# **make it green now**: open a subshell with docker group and pre-warm (only if daemon running)
-if have docker; then
-  if command -v sg >/dev/null 2>&1; then
-    log "Warming docker group in subshell (no logout needed)"
-    sg docker -c 'docker version >/dev/null 2>&1 || true'
-    if sg docker -c 'docker info >/dev/null 2>&1'; then
-      sg docker -c 'docker run --rm hello-world >/dev/null 2>&1 || true'
+      run_as_root systemctl enable --now docker || warn "systemctl enable/start docker failed (check logs)"
     else
-      warn "Docker daemon unreachable for user '$TARGET_USER' (service down or group session not refreshed). Try 'sudo systemctl start docker' and/or open a new shell."
+      warn "docker.service missing; reinstalling Docker Engine packages"
+      if [ "$PKG_MGR" = "apt" ]; then
+        pkg_install_reinstall docker-ce docker-ce-cli containerd.io || pkg_install_reinstall docker.io || true
+      else
+        pkg_install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || true
+      fi
+      run_as_root systemctl daemon-reload || true
+      if run_as_root systemctl list-unit-files | grep -q '^docker.service'; then
+        run_as_root systemctl enable --now docker || warn "systemctl enable/start docker failed after reinstall"
+      fi
     fi
   else
-    warn "'sg' command missing; log out/in or run 'newgrp docker' manually to refresh membership."
+    pid1_name="$(cat /proc/1/comm 2>/dev/null || echo "unknown")"
+    warn "systemd not detected (PID 1 = ${pid1_name}). Using legacy Docker start."
+    if ! start_docker_without_systemd; then
+      warn "Legacy Docker start methods failed; start dockerd manually."
+    fi
+  fi
+
+  docker_ready=0
+  if have docker; then
+    if wait_for_docker 12 2; then
+      docker_ready=1
+      log "Docker daemon is reachable"
+    else
+      warn "Docker daemon still unreachable after waiting; check 'sudo systemctl status docker' or dockerd logs"
+    fi
+  fi
+  if [ "$docker_ready" -eq 1 ]; then
+    if ! user_has_docker_access; then
+      warn "Docker is running but current shell for '$TARGET_USER' lacks group access. Run 'newgrp docker' or start a fresh shell."
+    fi
+  fi
+
+  if id -nG "$TARGET_USER" | tr ' ' '
+' | grep -qx docker; then
+    log "User '$TARGET_USER' already in docker group"
+  else
+    log "Adding '$TARGET_USER' to docker group"
+    $SUDO usermod -aG docker "$TARGET_USER" || true
+  fi
+
+  if have docker; then
+    if command -v sg >/dev/null 2>&1; then
+      log "Warming docker group in subshell (no logout needed)"
+      sg docker -c 'docker version >/dev/null 2>&1 || true'
+      if sg docker -c 'docker info >/dev/null 2>&1'; then
+        sg docker -c 'docker run --rm hello-world >/dev/null 2>&1 || true'
+      else
+        warn "Docker daemon unreachable for user '$TARGET_USER' (service down or group session not refreshed). Try 'sudo systemctl start docker' and/or open a new shell."
+      fi
+    else
+      warn "'sg' command missing; log out/in or run 'newgrp docker' manually to refresh membership."
+    fi
   fi
 fi
 
