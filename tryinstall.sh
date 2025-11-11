@@ -7,14 +7,55 @@ export PATH
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# ========= OS-release early load =========
-if [ -f /etc/os-release ]; then . /etc/os-release; fi
-: "${VERSION_CODENAME:=$(lsb_release -sc 2>/dev/null || sed -n 's/^VERSION_CODENAME=//p' /etc/os-release 2>/dev/null || echo "")}"
-
 # ========= Pretty logs =========
 log()  { printf "\033[1;34m[+] %s\033[0m\n" "$*"; }
 warn() { printf "\033[1;33m[!] %s\033[0m\n" "$*"; }
 err()  { printf "\033[1;31m[✘] %s\033[0m\n" "$*"; }
+
+# ========= OS-release early load =========
+if [ -f /etc/os-release ]; then . /etc/os-release; fi
+: "${VERSION_CODENAME:=$(lsb_release -sc 2>/dev/null || sed -n 's/^VERSION_CODENAME=//p' /etc/os-release 2>/dev/null || echo "")}"
+
+normalize_codename() {
+  local candidate="${1:-}"
+  candidate="${candidate,,}"
+  candidate="${candidate//\"/}"
+  candidate="${candidate//\'/}"
+  candidate="${candidate// /}"
+  case "$candidate" in
+    ""|"n/a"|"na"|"n.a"|"none"|"unknown"|"nodistro")
+      return 1
+      ;;
+  esac
+  if [[ "$candidate" =~ ^[a-z0-9][-a-z0-9]*$ ]]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+  return 1
+}
+
+resolve_codename() {
+  local guess
+  for guess in \
+    "${VERSION_CODENAME:-}" \
+    "$(lsb_release -sc 2>/dev/null || true)" \
+    "$(grep -E '^VERSION_CODENAME=' /etc/os-release 2>/dev/null | tail -n1 | cut -d= -f2)" \
+    "$(grep -E '^UBUNTU_CODENAME=' /etc/os-release 2>/dev/null | tail -n1 | cut -d= -f2)" \
+    "$(grep -E '^DEBIAN_CODENAME=' /etc/os-release 2>/dev/null | tail -n1 | cut -d= -f2)" \
+    "$(cut -d/ -f1 /etc/debian_version 2>/dev/null || true)"; do
+    if codename="$(normalize_codename "$guess")"; then
+      printf '%s\n' "$codename"
+      return 0
+    fi
+  done
+  return 1
+}
+
+if codename="$(resolve_codename)"; then
+  VERSION_CODENAME="$codename"
+else
+  VERSION_CODENAME=""
+fi
 
 # ========= sudo detection =========
 if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; else SUDO=""; fi
@@ -74,15 +115,22 @@ else
 fi
 
 ensure_docker_repo() {
-  if [ ! -f /etc/apt/sources.list.d/docker.list ]; then
+  local docker_list="/etc/apt/sources.list.d/docker.list"
+  if [ -f "$docker_list" ]; then
+    if grep -Eq 'docker\.com/linux/debian (n/a|nodistro|unknown)' "$docker_list"; then
+      warn "Removing stale Docker repo entry with invalid codename"
+      $SUDO rm -f "$docker_list"
+    fi
+  fi
+  if [ ! -f "$docker_list" ]; then
     log "Configuring Docker upstream APT repo"
     $SUDO install -m 0755 -d /etc/apt/keyrings
     [ -f /etc/apt/keyrings/docker.gpg ] || (curl -fsSL https://download.docker.com/linux/debian/gpg | $SUDO gpg --dearmor -o /etc/apt/keyrings/docker.gpg && $SUDO chmod a+r /etc/apt/keyrings/docker.gpg)
     if [ -z "${VERSION_CODENAME}" ]; then
-      warn "VERSION_CODENAME empty; Docker upstream repo may fail"
+      warn "VERSION_CODENAME empty/invalid; cannot configure Docker upstream repo (falling back to docker.io)"
       return 1
     fi
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian ${VERSION_CODENAME} stable" | $SUDO tee /etc/apt/sources.list.d/docker.list >/dev/null
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian ${VERSION_CODENAME} stable" | $SUDO tee "$docker_list" >/dev/null
     $SUDO apt-get update -y
   fi
 }
