@@ -24,6 +24,7 @@ have()          { PATH="$PATH:/usr/sbin:/sbin" command -v "$1" >/dev/null 2>&1; 
 pkg_installed() { dpkg -s "$1" >/dev/null 2>&1; }
 ensure_pkg()    { pkg_installed "$1" || $SUDO apt-get install -y "$1"; }
 ensure_pkgs()   { for p in "$@"; do ensure_pkg "$p"; done; }
+run_as_root()   { if [ -n "$SUDO" ]; then $SUDO "$@"; else "$@"; fi; }
 ensure_optional_pkg() {
   if pkg_installed "$1"; then return 0; fi
   if $SUDO apt-get install -y "$1"; then
@@ -34,6 +35,19 @@ ensure_optional_pkg() {
   fi
 }
 ensure_optional_pkgs() { for p in "$@"; do ensure_optional_pkg "$p" || true; done; }
+wait_for_docker() {
+  local attempts="${1:-10}"
+  local delay="${2:-3}"
+  local i=1
+  while [ "$i" -le "$attempts" ]; do
+    if have docker && run_as_root docker info >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep "$delay"
+    i=$((i+1))
+  done
+  return 1
+}
 
 # ========= Kernel access detection =========
 is_limited_kernel() {
@@ -222,26 +236,32 @@ if ! have docker-compose; then
 exec docker compose "$@"
 EOF
 fi
-# enable+start daemon (only in FULL mode by default)
-if [ "$MODE" = "FULL" ]; then
-  log "Enabling + starting Docker daemon"
-  if command -v systemctl >/dev/null 2>&1; then
-    if systemctl list-unit-files | grep -q '^docker.service'; then
-      $SUDO systemctl enable --now docker || true
-    else
-      warn "docker.service missing; reinstalling Docker Engine packages"
-      $SUDO apt-get install -y --reinstall docker-ce docker-ce-cli containerd.io 2>/dev/null || $SUDO apt-get install -y --reinstall docker.io 2>/dev/null || true
-      $SUDO systemctl daemon-reload || true
-      if systemctl list-unit-files | grep -q '^docker.service'; then
-        $SUDO systemctl enable --now docker || true
-      fi
-    fi
+# enable+start daemon (always try; warn if limited environments block it)
+log "Ensuring Docker daemon is enabled + running"
+if [ "$MODE" = "LIMITED" ]; then
+  warn "LIMITED mode detected; docker service start may fail if cgroup/ns control is blocked"
+fi
+if command -v systemctl >/dev/null 2>&1; then
+  if systemctl list-unit-files | grep -q '^docker.service'; then
+    $SUDO systemctl enable --now docker || warn "systemctl enable/start docker failed (check logs)"
   else
-    log "systemctl not available; attempting 'service docker start'"
-    $SUDO service docker start || true
+    warn "docker.service missing; reinstalling Docker Engine packages"
+    $SUDO apt-get install -y --reinstall docker-ce docker-ce-cli containerd.io 2>/dev/null || $SUDO apt-get install -y --reinstall docker.io 2>/dev/null || true
+    $SUDO systemctl daemon-reload || true
+    if systemctl list-unit-files | grep -q '^docker.service'; then
+      $SUDO systemctl enable --now docker || warn "systemctl enable/start docker failed after reinstall"
+    fi
   fi
 else
-  log "LIMITED mode: skipping Docker daemon auto-start (start manually if needed)"
+  log "systemctl not available; attempting 'service docker start'"
+  $SUDO service docker start || warn "'service docker start' failed (non-systemd env?)"
+fi
+if have docker; then
+  if wait_for_docker 12 2; then
+    log "Docker daemon is reachable"
+  else
+    warn "Docker daemon still unreachable after waiting; check 'sudo systemctl status docker'"
+  fi
 fi
 # add user to group
 if id -nG "$TARGET_USER" | tr ' ' '\n' | grep -qx docker; then
@@ -251,13 +271,17 @@ else
   $SUDO usermod -aG docker "$TARGET_USER" || true
 fi
 # **make it green now**: open a subshell with docker group and pre-warm (only if daemon running)
-if [ "$MODE" = "FULL" ] && have docker; then
-  log "Warming docker group in subshell (no logout needed)"
-  sg docker -c 'docker version >/dev/null 2>&1 || true'
-  sg docker -c 'docker info >/dev/null 2>&1 || true'
-  sg docker -c 'docker run --rm hello-world >/dev/null 2>&1 || true'
-  if ! sg docker -c 'docker info >/dev/null 2>&1'; then
-    warn "Docker daemon still unreachable; start it manually (sudo systemctl start docker) and rerun HEALTH.sh."
+if have docker; then
+  if command -v sg >/dev/null 2>&1; then
+    log "Warming docker group in subshell (no logout needed)"
+    sg docker -c 'docker version >/dev/null 2>&1 || true'
+    if sg docker -c 'docker info >/dev/null 2>&1'; then
+      sg docker -c 'docker run --rm hello-world >/dev/null 2>&1 || true'
+    else
+      warn "Docker daemon unreachable for user '$TARGET_USER' (service down or group session not refreshed). Try 'sudo systemctl start docker' and/or open a new shell."
+    fi
+  else
+    warn "'sg' command missing; log out/in or run 'newgrp docker' manually to refresh membership."
   fi
 fi
 
