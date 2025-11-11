@@ -283,6 +283,34 @@ ensure_userns_enabled() {
   KERNEL_USERNS="1"
 }
 
+offer_kernel_fix() {
+  if [ "$PKG_MGR" != "apt" ]; then
+    warn "Kernel auto-fix helper currently supports apt-based systems only."
+    return 1
+  fi
+  local answer="y"
+  if [ -t 0 ]; then
+    read -r -p "Try kernel fix and reboot? [Y/n]: " answer || answer=""
+  fi
+  answer="${answer:-y}"
+  case "${answer,,}" in
+    y|yes)
+      ;;
+    *)
+      log "Skipping kernel fix per user choice."
+      return 1
+      ;;
+  esac
+  log "Applying kernel compatibility fix (latest kernel + userns helpers)"
+  pkg_update
+  pkg_install linux-image-amd64 linux-headers-amd64
+  echo 'kernel.unprivileged_userns_clone=1' | run_as_root tee /etc/sysctl.d/99-userns.conf >/dev/null || true
+  run_as_root sysctl --system >/dev/null 2>&1 || true
+  pkg_install uidmap slirp4netns fuse-overlayfs
+  warn "Kernel fix applied. Please reboot before rerunning tryinstall.sh."
+  return 0
+}
+
 ensure_rootless_prereqs() {
   if [ "$PKG_MGR" = "apt" ]; then
     ensure_pkgs uidmap fuse-overlayfs slirp4netns dbus-user-session
@@ -362,6 +390,11 @@ user_has_docker_access() {
 detect_kernel_caps
 if [ "$KERNEL_USERNS" != "1" ] && [ -n "$SUDO" ]; then
   if ensure_userns_enabled; then
+    detect_kernel_caps
+  fi
+fi
+if [ "$KERNEL_LIMITED" -eq 1 ]; then
+  if offer_kernel_fix; then
     detect_kernel_caps
   fi
 fi
