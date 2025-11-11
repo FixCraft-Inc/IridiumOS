@@ -26,11 +26,53 @@ normalize_codename() {
     ""|"n/a"|"na"|"n.a"|"none"|"unknown"|"nodistro")
       return 1
       ;;
+    osaka)
+      printf 'trixie\n'
+      return 0
+      ;;
   esac
   if [[ "$candidate" =~ ^[a-z0-9][-a-z0-9]*$ ]]; then
     printf '%s\n' "$candidate"
     return 0
   fi
+  return 1
+}
+
+codename_from_sources() {
+  local file line suite parts token next_is_suite codename
+  for file in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
+    [ -r "$file" ] || continue
+    while IFS= read -r line; do
+      line="${line%%#*}"
+      line="${line#"${line%%[![:space:]]*}"}"
+      [ -n "$line" ] || continue
+      case "$line" in
+        deb*|deb-src*) ;;
+        *) continue ;;
+      esac
+      next_is_suite=0
+      read -r -a parts <<<"$line"
+      for token in "${parts[@]}"; do
+        # Skip repo qualifiers like [arch=amd64]
+        [[ "$token" == \[* ]] && continue
+        [[ "$token" == deb* ]] && continue
+        if [[ "$token" == *://* ]]; then
+          next_is_suite=1
+          continue
+        fi
+        if [ "$next_is_suite" -eq 1 ]; then
+          suite="${token%%/}"
+          suite="${suite%%#*}"
+          suite="${suite%%-*}"
+          if codename="$(normalize_codename "$suite")"; then
+            printf '%s\n' "$codename"
+            return 0
+          fi
+          break
+        fi
+      done
+    done <"$file"
+  done
   return 1
 }
 
@@ -48,6 +90,14 @@ resolve_codename() {
       return 0
     fi
   done
+  if codename="$(codename_from_sources)"; then
+    printf '%s\n' "$codename"
+    return 0
+  fi
+  if [ "${ID:-}" = "iridium" ]; then
+    printf '%s\n' "trixie"
+    return 0
+  fi
   return 1
 }
 
@@ -88,6 +138,12 @@ wait_for_docker() {
     i=$((i+1))
   done
   return 1
+}
+user_has_docker_access() {
+  if [ "$TARGET_USER" = "root" ]; then
+    return 0
+  fi
+  sudo -u "$TARGET_USER" -H env PATH="$PATH" docker info >/dev/null 2>&1
 }
 current_node_major() {
   if ! have node; then
@@ -403,11 +459,18 @@ else
     warn "Legacy Docker start methods failed; start dockerd manually."
   fi
 fi
+docker_ready=0
 if have docker; then
   if wait_for_docker 12 2; then
+    docker_ready=1
     log "Docker daemon is reachable"
   else
     warn "Docker daemon still unreachable after waiting; check 'sudo systemctl status docker' or dockerd logs"
+  fi
+fi
+if [ "$docker_ready" -eq 1 ]; then
+  if ! user_has_docker_access; then
+    warn "Docker is running but current shell for '$TARGET_USER' lacks group access. Run 'newgrp docker' or start a fresh shell."
   fi
 fi
 # add user to group
