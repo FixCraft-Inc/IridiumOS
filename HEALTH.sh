@@ -2,6 +2,9 @@
 # IridiumOS build prerequisites health check
 set -euo pipefail
 
+PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+export PATH
+
 # ----------------------------- CONFIG ---------------------------------
 REQ_NODE_MAJOR_MIN=20
 REQ_JAVA_MIN=11
@@ -48,14 +51,16 @@ kv() { printf "%-26s %s\n" "$1" "$2"; }
 
 # Kernel access detection
 is_limited_kernel() {
-  # Writable sysctl?
-  test -w /proc/sys 2>/dev/null || return 0
+  # Writable sysctl only matters if we're root (non-root cannot write by design)
+  if [ "$(id -u)" -eq 0 ]; then
+    test -w /proc/sys 2>/dev/null || return 0
+  fi
   # sysctl readable?
   sysctl -n kernel.osrelease >/dev/null 2>&1 || return 0
   # Try a harmless netlink op (may EPERM in locked containers)
   ip link show >/dev/null 2>&1 || return 0
-  # CAP checks if available
-  if have capsh; then
+  # CAP checks if available (only meaningful for root)
+  if have capsh && [ "$(id -u)" -eq 0 ]; then
     capsh --print 2>/dev/null | grep -q 'cap_sys_admin' || return 0
   fi
   return 1

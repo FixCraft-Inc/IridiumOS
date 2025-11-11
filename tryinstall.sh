@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+export PATH
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
@@ -34,14 +37,16 @@ ensure_optional_pkgs() { for p in "$@"; do ensure_optional_pkg "$p" || true; don
 
 # ========= Kernel access detection =========
 is_limited_kernel() {
-  # Writable sysctl?
-  test -w /proc/sys 2>/dev/null || return 0
+  # Root-only knob: only test writability when we actually run as root.
+  if [ "$(id -u)" -eq 0 ]; then
+    test -w /proc/sys 2>/dev/null || return 0
+  fi
   # sysctl readable?
   sysctl -n kernel.osrelease >/dev/null 2>&1 || return 0
   # Try a harmless netlink op (may EPERM in locked containers)
   ip link show >/dev/null 2>&1 || return 0
-  # CAP checks if available
-  if have capsh; then
+  # CAP checks if available (only meaningful for root)
+  if have capsh && [ "$(id -u)" -eq 0 ]; then
     capsh --print 2>/dev/null | grep -q 'cap_sys_admin' || return 0
   fi
   return 1
