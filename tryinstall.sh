@@ -175,22 +175,7 @@ detect_kernel_caps() {
   else
     KERNEL_LIMITED=0
   fi
-  if [ "${FORCE_DOCKER_ROOTLESS:-0}" = "1" ]; then
-    DOCKER_STRATEGY="ROOTLESS"
-  elif [ "$KERNEL_LIMITED" -eq 1 ]; then
-    DOCKER_STRATEGY="ROOTLESS"
-  else
-    DOCKER_STRATEGY="SYSTEM"
-  fi
-  log "Kernel caps: cgroups=${KERNEL_CGROUP_MODE}, overlay=${KERNEL_OVERLAY}, fuse-overlayfs=${KERNEL_FUSE_OVERLAY}, userns_clone=${KERNEL_USERNS}, slirp4netns=${KERNEL_SLIRP}"
-  if [ "$DOCKER_STRATEGY" = "ROOTLESS" ]; then
-    warn "Kernel limitations detected or FORCE_DOCKER_ROOTLESS=1 -> using rootless Docker plan"
-  else
-    log "Kernel supports full Docker (system daemon path)"
-  fi
 }
-
-detect_kernel_caps
 
 # ========= helpers =========
 have()          { PATH="$PATH:/usr/sbin:/sbin" command -v "$1" >/dev/null 2>&1; }
@@ -373,6 +358,26 @@ user_has_docker_access() {
   fi
   sudo -u "$TARGET_USER" -H env PATH="$PATH" "${runtime_env[@]}" docker info >/dev/null 2>&1
 }
+
+detect_kernel_caps
+if [ "$KERNEL_USERNS" != "1" ] && [ -n "$SUDO" ]; then
+  if ensure_userns_enabled; then
+    detect_kernel_caps
+  fi
+fi
+if [ "${FORCE_DOCKER_ROOTLESS:-0}" = "1" ]; then
+  DOCKER_STRATEGY="ROOTLESS"
+elif [ "$KERNEL_LIMITED" -eq 1 ]; then
+  DOCKER_STRATEGY="ROOTLESS"
+else
+  DOCKER_STRATEGY="SYSTEM"
+fi
+log "Kernel caps: cgroups=${KERNEL_CGROUP_MODE}, overlay=${KERNEL_OVERLAY}, fuse-overlayfs=${KERNEL_FUSE_OVERLAY}, userns_clone=${KERNEL_USERNS}, slirp4netns=${KERNEL_SLIRP}"
+if [ "$DOCKER_STRATEGY" = "ROOTLESS" ]; then
+  warn "Kernel limitations detected or FORCE_DOCKER_ROOTLESS=1 -> using rootless Docker plan"
+else
+  log "Kernel supports full Docker (system daemon path)"
+fi
 current_node_major() {
   if ! have node; then
     echo 0
@@ -498,6 +503,11 @@ if [ "$KERNEL_LIMITED" -eq 1 ]; then
 fi
 if [ "$DOCKER_STRATEGY" = "ROOTLESS" ]; then
   MODE="LIMITED"
+fi
+
+if [ "$MODE" = "LIMITED" ]; then
+  err "Sorry, This Machine Has Limited Kernel. Please Use A KVM (full virtualization) to build."
+  exit 1
 fi
 
 ensure_docker_repo() {
@@ -791,8 +801,7 @@ EOF
     fi
   fi
 
-  if id -nG "$TARGET_USER" | tr ' ' '
-' | grep -qx docker; then
+  if id -nG "$TARGET_USER" | tr ' ' '\n' | grep -qx docker; then
     log "User '$TARGET_USER' already in docker group"
   else
     log "Adding '$TARGET_USER' to docker group"

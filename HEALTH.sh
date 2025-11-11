@@ -9,6 +9,12 @@ if [ -f /etc/os-release ]; then . /etc/os-release; fi
 DISTRO_ID="${ID:-unknown}"
 DISTRO_PRETTY="${PRETTY_NAME:-$DISTRO_ID}"
 PKG_LABEL="unknown"
+KERNEL_LIMITED=0
+KERNEL_USERNS=0
+KERNEL_CGROUP_MODE="unknown"
+KERNEL_OVERLAY="no"
+KERNEL_FUSE_OVERLAY="no"
+MODE_REASON=""
 if command -v apt-get >/dev/null 2>&1; then
   PKG_LABEL="apt"
 elif command -v dnf >/dev/null 2>&1; then
@@ -35,6 +41,10 @@ RED=$(printf '\033[31m'); GREEN=$(printf '\033[32m'); YEL=$(printf '\033[33m'); 
 PASS="${GREEN}✔${RST}"
 FAIL="${RED}✘${RST}"
 WARN="${YEL}▲${RST}"
+ICON_GOOD="✅"
+ICON_WARN="⚠️"
+ICON_BAD="❌"
+ICON_INFO="ℹ️"
 
 JSON_OUT=0
 DEEP=0
@@ -92,6 +102,29 @@ missing_suffix() {
     printf " (missing: %s)" "$(join_by ', ' "$@")"
   fi
 }
+detect_kernel_caps() {
+  KERNEL_USERNS="$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || echo 0)"
+  if mount | grep -q 'type cgroup2'; then
+    KERNEL_CGROUP_MODE="v2"
+  elif mount | grep -q 'type cgroup '; then
+    KERNEL_CGROUP_MODE="v1"
+  else
+    KERNEL_CGROUP_MODE="none"
+  fi
+  if [ -r /proc/filesystems ] && grep -qw overlay /proc/filesystems; then
+    KERNEL_OVERLAY="yes"
+  fi
+  if command -v fuse-overlayfs >/dev/null 2>&1; then
+    KERNEL_FUSE_OVERLAY="yes"
+  else
+    KERNEL_FUSE_OVERLAY="no"
+  fi
+  if [ "$KERNEL_CGROUP_MODE" = "none" ] || { [ "$KERNEL_OVERLAY" = "no" ] && [ "$KERNEL_FUSE_OVERLAY" = "no" ]; } || [ "$KERNEL_USERNS" != "1" ]; then
+    KERNEL_LIMITED=1
+  else
+    KERNEL_LIMITED=0
+  fi
+}
 
 # Kernel access detection
 is_limited_kernel() {
@@ -112,8 +145,14 @@ is_limited_kernel() {
 
 if is_limited_kernel; then
   MODE="LIMITED"
+  MODE_REASON="restricted container capabilities"
 else
   MODE="FULL"
+fi
+detect_kernel_caps
+if [ "$KERNEL_LIMITED" -eq 1 ]; then
+  MODE="LIMITED"
+  [ -z "$MODE_REASON" ] && MODE_REASON="missing cgroups/overlay/user namespaces"
 fi
 
 get_node_major() {
@@ -418,23 +457,37 @@ fi
 
 if [ "$HUMAN_MODE" -eq 1 ]; then
   echo
-  platform_line="Platform: $(is_linux && echo Linux || echo Non-Linux) / $(uname -m)"
-  echo "$platform_line"
-  echo "Mode: $MODE"
-  core_line="Core Tools: ${CORE_OK}/${CORE_TOTAL} ok"
+  if is_linux; then
+    echo "${ICON_GOOD} Platform: Linux / $(uname -m)"
+  else
+    echo "${ICON_BAD} Platform: Non-Linux / $(uname -m)"
+  fi
+  mode_icon=$([ "$MODE" = "FULL" ] && echo "$ICON_GOOD" || echo "$ICON_WARN")
+  mode_line="$mode_icon Mode: $MODE"
+  if [ "$MODE" = "LIMITED" ] && [ -n "$MODE_REASON" ]; then
+    mode_line+=" (${MODE_REASON})"
+  fi
+  echo "$mode_line"
+
+  core_icon=$([ "$CORE_OK" -eq "$CORE_TOTAL" ] && echo "$ICON_GOOD" || echo "$ICON_WARN")
+  core_line="$core_icon Core Tools: ${CORE_OK}/${CORE_TOTAL}"
   if [ "${#CORE_MISSING[@]}" -gt 0 ]; then
     core_line+="$(missing_suffix "${CORE_MISSING[@]}")"
   fi
   echo "$core_line"
-  opt_line="Optional Net Tools: ${OPT_OK}/${OPT_TOTAL} ok"
+
+  opt_icon=$([ "$OPT_OK" -eq "$OPT_TOTAL" ] && echo "$ICON_GOOD" || echo "$ICON_WARN")
+  opt_line="$opt_icon Optional Net Tools: ${OPT_OK}/${OPT_TOTAL}"
   if [ "${#OPT_MISSING[@]}" -gt 0 ]; then
     opt_line+="$(missing_suffix "${OPT_MISSING[@]}")"
-    if [ "$MODE" = "LIMITED" ] || [ "$OPT_LIMITED_NOTE" -eq 1 ]; then
-      opt_line+=" [limited kernel]"
-    fi
+  fi
+  if [ "$MODE" = "LIMITED" ] || [ "$OPT_LIMITED_NOTE" -eq 1 ]; then
+    opt_line+=" [limited kernel]"
   fi
   echo "$opt_line"
-  rust_line="Rust Toolchain: ${RUST_OK}/${RUST_TOTAL} ok"
+
+  rust_icon=$([ "$RUST_OK" -eq "$RUST_TOTAL" ] && echo "$ICON_GOOD" || echo "$ICON_WARN")
+  rust_line="$rust_icon Rust Toolchain: ${RUST_OK}/${RUST_TOTAL}"
   if [ -n "$RUST_CHANNEL" ]; then
     rust_line+=" (channel: ${RUST_CHANNEL})"
   fi
@@ -442,16 +495,20 @@ if [ "$HUMAN_MODE" -eq 1 ]; then
     rust_line+="$(missing_suffix "${RUST_MISSING[@]}")"
   fi
   echo "$rust_line"
+
   if [ "$GLIBC_TOTAL" -eq 0 ]; then
-    echo "32-bit Toolchain: skipped (--no-compile)"
+    echo "${ICON_INFO} 32-bit Toolchain: skipped (--no-compile)"
   else
-    glibc_line="32-bit Toolchain: ${GLIBC_OK}/${GLIBC_TOTAL} ok"
+    glibc_icon=$([ "$GLIBC_OK" -eq "$GLIBC_TOTAL" ] && echo "$ICON_GOOD" || echo "$ICON_WARN")
+    glibc_line="$glibc_icon 32-bit Toolchain: ${GLIBC_OK}/${GLIBC_TOTAL}"
     if [ "$GLIBC_STATE" = "fail" ]; then
       glibc_line+=" (need multilib)"
     fi
     echo "$glibc_line"
   fi
-  docker_line="Docker: ${DOCKER_OK}/${DOCKER_TOTAL} ok"
+
+  docker_icon=$([ "$DOCKER_OK" -eq "$DOCKER_TOTAL" ] && echo "$ICON_GOOD" || echo "$ICON_WARN")
+  docker_line="$docker_icon Docker: ${DOCKER_OK}/${DOCKER_TOTAL}"
   if [ "${#DOCKER_MISSING[@]}" -gt 0 ]; then
     docker_line+="$(missing_suffix "${DOCKER_MISSING[@]}")"
   fi
@@ -459,39 +516,32 @@ if [ "$HUMAN_MODE" -eq 1 ]; then
     docker_line+=" [${DOCKER_NOTE}]"
   fi
   echo "$docker_line"
+
   ram_human="$(humanize_mb "$RAM_VALUE_MB")"
   ram_req="$(humanize_mb "$REQ_RAM_MB_MIN")"
-  ram_line="RAM: ${ram_human} (>= ${ram_req})"
-  if [ "$RAM_STATUS" -eq 1 ]; then
-    ram_line+=" ok"
-  else
-    ram_line+=" LOW"
-  fi
+  ram_icon=$([ "$RAM_STATUS" -eq 1 ] && echo "$ICON_GOOD" || echo "$ICON_BAD")
+  echo "$ram_icon RAM: ${ram_human} (>= ${ram_req})"
+
   disk_human="$(humanize_mb "$DISK_VALUE_MB")"
   disk_req="$(humanize_mb "$REQ_DISK_MB_MIN")"
-  disk_line="Disk: ${disk_human} (>= ${disk_req})"
-  if [ "$DISK_STATUS" -eq 1 ]; then
-    disk_line+=" ok"
-  else
-    disk_line+=" LOW"
-  fi
-  echo "$ram_line"
-  echo "$disk_line"
-  net_line="Networking: "
+  disk_icon=$([ "$DISK_STATUS" -eq 1 ] && echo "$ICON_GOOD" || echo "$ICON_BAD")
+  echo "$disk_icon Disk: ${disk_human} (>= ${disk_req})"
+
+  net_icon=$([ "$NET_STATUS" = "yes" ] && echo "$ICON_GOOD" || echo "$ICON_WARN")
   if [ "$NET_STATUS" = "yes" ]; then
-    net_line+="ok"
+    echo "$net_icon Networking: ok"
   else
-    net_line+="issues (check DNS/proxy)"
+    echo "$net_icon Networking: issues (check DNS/proxy)"
   fi
-  echo "$net_line"
+
   if [ "$overall_rc" -eq 0 ]; then
     if [ "$MODE" = "LIMITED" ]; then
-      echo "Ready: All essential checks passed (LIMITED mode)."
+      echo "${ICON_WARN} Ready: All essential checks passed (LIMITED mode)."
     else
-      echo "Ready: All essential checks passed."
+      echo "${ICON_GOOD} Ready: All essential checks passed."
     fi
   else
-    echo "Ready: Some essential checks failed."
+    echo "${ICON_BAD} Ready: Some essential checks failed."
   fi
 fi
 
