@@ -21,6 +21,16 @@ have()          { PATH="$PATH:/usr/sbin:/sbin" command -v "$1" >/dev/null 2>&1; 
 pkg_installed() { dpkg -s "$1" >/dev/null 2>&1; }
 ensure_pkg()    { pkg_installed "$1" || $SUDO apt-get install -y "$1"; }
 ensure_pkgs()   { for p in "$@"; do ensure_pkg "$p"; done; }
+ensure_optional_pkg() {
+  if pkg_installed "$1"; then return 0; fi
+  if $SUDO apt-get install -y "$1"; then
+    return 0
+  else
+    warn "Optional package '$1' failed to install (continuing)"
+    return 1
+  fi
+}
+ensure_optional_pkgs() { for p in "$@"; do ensure_optional_pkg "$p" || true; done; }
 
 # ========= Kernel access detection =========
 is_limited_kernel() {
@@ -91,13 +101,16 @@ fi
 # ========= Core tools =========
 log "Core deps (clang, inotify-tools, jq, uuid-runtime, binaryen, TLS, net utils)"
 CORE_PKGS=(clang inotify-tools jq uuid-runtime binaryen ca-certificates curl gnupg iproute2)
-if [ "$MODE" = "FULL" ]; then
-  CORE_PKGS+=(iptables procps wireguard-tools)
-else
-  # LIMITED mode: try to install but don't fail if unavailable
-  CORE_PKGS+=(iptables procps)
-fi
 ensure_pkgs "${CORE_PKGS[@]}"
+
+log "Network sandbox deps (iptables, procps/sysctl, wireguard-tools/wg-quick)"
+NETNS_PKGS=(iptables procps wireguard-tools)
+if [ "$MODE" = "FULL" ]; then
+  ensure_pkgs "${NETNS_PKGS[@]}"
+else
+  log "LIMITED mode: best-effort install of network sandbox deps so containers that allow it still get them"
+  ensure_optional_pkgs "${NETNS_PKGS[@]}"
+fi
 
 # ========= Java (>=11; prefer 21) =========
 if have java; then

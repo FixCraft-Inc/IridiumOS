@@ -163,19 +163,20 @@ for c in "${OPTIONAL_CMDS[@]}"; do
 		echo "$(kv "$c (optional)" "${PASS} found")"; REPORT["cmd_$c"]="yes"
 	else
 		if [ "$MODE" = "LIMITED" ]; then
-			echo "$(kv "$c (optional)" "${WARN} skipped (limited kernel access)")"; REPORT["cmd_$c"]="skipped"
+			echo "$(kv "$c (optional)" "${WARN} missing (limited kernel mode - still recommended)")"
 		else
-			echo "$(kv "$c (optional)" "${WARN} missing")"; REPORT["cmd_$c"]="no"
+			echo "$(kv "$c (optional)" "${WARN} missing")"
 		fi
+		REPORT["cmd_$c"]="no"
 		case "$c" in
 			wg-quick)
-				[ "$MODE" != "LIMITED" ] && FIXHINTS+=("Optional: Install wireguard-tools for network namespace VPN support. Debian/Ubuntu: sudo apt install wireguard-tools")
+				FIXHINTS+=("Optional: Install wireguard-tools (wg-quick) for network namespace VPN support. Debian/Ubuntu: sudo apt install wireguard-tools")
 				;;
 			iptables)
-				[ "$MODE" != "LIMITED" ] && FIXHINTS+=("Optional: Install iptables for network namespace firewall support. Debian/Ubuntu: sudo apt install iptables. Note: May be in /usr/sbin (add to PATH or use full path)")
+				FIXHINTS+=("Optional: Install iptables for network namespace firewall support. Debian/Ubuntu: sudo apt install iptables. Note: May be in /usr/sbin (add to PATH or use full path)")
 				;;
 			sysctl)
-				[ "$MODE" != "LIMITED" ] && FIXHINTS+=("Optional: Install procps (sysctl) for network namespace support. Debian/Ubuntu: sudo apt install procps. Note: May be in /usr/sbin")
+				FIXHINTS+=("Optional: Install procps (sysctl) for network namespace support. Debian/Ubuntu: sudo apt install procps. Note: May be in /usr/sbin")
 				;;
 		esac
 	fi
