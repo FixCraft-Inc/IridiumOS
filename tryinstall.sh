@@ -89,6 +89,55 @@ wait_for_docker() {
   done
   return 1
 }
+current_node_major() {
+  if ! have node; then
+    echo 0
+    return
+  fi
+  node -v | sed 's/^v//;s/\..*$//' 2>/dev/null || echo 0
+}
+needs_node_refresh() {
+  local nmaj
+  nmaj="$(current_node_major 2>/dev/null || echo 0)"
+  [ "${nmaj:-0}" -lt 20 ]
+}
+docker_healthy() {
+  have docker || return 1
+  run_as_root docker info >/dev/null 2>&1
+}
+prune_docker_repo_if_needed() {
+  if docker_healthy; then
+    return
+  fi
+  local removed=0 file
+  for file in /etc/apt/sources.list.d/*.list; do
+    [ -f "$file" ] || continue
+    grep -q 'download.docker.com/linux/debian' "$file" || continue
+    if grep -Eq 'docker\.com/linux/debian[^\n]*(n/a|nodistro|unknown)( |$)' "$file"; then
+      warn "Docker missing/unhealthy; removing stale Docker repo entry: $file"
+      $SUDO rm -f "$file"
+      removed=1
+    fi
+  done
+  if [ "$removed" -gt 0 ]; then
+    log "Removed invalid Docker APT repo entries; will reconfigure if needed"
+  fi
+}
+prune_nodesource_repo_if_needed() {
+  if ! needs_node_refresh; then
+    return
+  fi
+  local removed=0 file
+  for file in /etc/apt/sources.list.d/nodesource*.list; do
+    [ -f "$file" ] || continue
+    warn "Node.js missing/outdated; removing stale NodeSource repo entry: $file"
+    $SUDO rm -f "$file"
+    removed=1
+  done
+  if [ "$removed" -gt 0 ]; then
+    log "Removed stale NodeSource repo entries; installer will recreate fresh ones"
+  fi
+}
 
 # ========= Kernel access detection =========
 is_limited_kernel() {
@@ -146,6 +195,10 @@ resolve_user() {
 }
 TARGET_USER="$(resolve_user)"
 log "TARGET_USER=${TARGET_USER}"
+
+# ========= Repo cleanup before refresh =========
+prune_docker_repo_if_needed
+prune_nodesource_repo_if_needed
 
 # ========= APT refresh =========
 log "APT update"
