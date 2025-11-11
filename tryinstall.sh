@@ -160,6 +160,22 @@ prune_docker_repo_if_needed() {
     log "Removed invalid Docker APT repo entries; will reconfigure if needed"
   fi
 }
+
+prune_nodesource_repo_if_needed() {
+  if ! needs_node_refresh; then
+    return
+  fi
+  local removed=0 file
+  for file in /etc/apt/sources.list.d/nodesource*.list; do
+    [ -f "$file" ] || continue
+    warn "Node.js missing/outdated; removing stale NodeSource repo entry: $file"
+    $SUDO rm -f "$file"
+    removed=1
+  done
+  if [ "$removed" -gt 0 ]; then
+    log "Removed stale NodeSource repo entries; installer will recreate fresh ones"
+  fi
+}
 # ========= Kernel access detection =========
 is_limited_kernel() {
   # Root-only knob: only test writability when we actually run as root.
