@@ -105,6 +105,43 @@ docker_healthy() {
   have docker || return 1
   run_as_root docker info >/dev/null 2>&1
 }
+docker_running() {
+  if command -v pgrep >/dev/null 2>&1; then
+    pgrep -x dockerd >/dev/null 2>&1
+  else
+    pidof dockerd >/dev/null 2>&1
+  fi
+}
+systemctl_usable() {
+  command -v systemctl >/dev/null 2>&1 || return 1
+  local pid1
+  pid1="$(cat /proc/1/comm 2>/dev/null || echo "")"
+  [ "$pid1" = "systemd" ] || return 1
+  run_as_root systemctl list-unit-files >/dev/null 2>&1 || return 1
+  return 0
+}
+start_docker_without_systemd() {
+  if docker_running; then
+    log "dockerd already running (without systemd)"
+    return 0
+  fi
+  if [ -x /etc/init.d/docker ]; then
+    log "Starting Docker via /etc/init.d/docker"
+    $SUDO /etc/init.d/docker start && return 0
+  fi
+  if command -v service >/dev/null 2>&1; then
+    log "Starting Docker via 'service docker start'"
+    $SUDO service docker start && return 0
+  fi
+  if have dockerd; then
+    log "Starting dockerd manually in background (no init system detected)"
+    run_as_root bash -c "nohup dockerd --host=unix:///var/run/docker.sock >/var/log/dockerd-tryinstall.log 2>&1 &"
+    sleep 3
+    return 0
+  fi
+  warn "dockerd binary missing; unable to start Docker daemon"
+  return 1
+}
 prune_docker_repo_if_needed() {
   if docker_healthy; then
     return
@@ -123,22 +160,6 @@ prune_docker_repo_if_needed() {
     log "Removed invalid Docker APT repo entries; will reconfigure if needed"
   fi
 }
-prune_nodesource_repo_if_needed() {
-  if ! needs_node_refresh; then
-    return
-  fi
-  local removed=0 file
-  for file in /etc/apt/sources.list.d/nodesource*.list; do
-    [ -f "$file" ] || continue
-    warn "Node.js missing/outdated; removing stale NodeSource repo entry: $file"
-    $SUDO rm -f "$file"
-    removed=1
-  done
-  if [ "$removed" -gt 0 ]; then
-    log "Removed stale NodeSource repo entries; installer will recreate fresh ones"
-  fi
-}
-
 # ========= Kernel access detection =========
 is_limited_kernel() {
   # Root-only knob: only test writability when we actually run as root.
@@ -337,31 +358,40 @@ if ! have docker-compose; then
 exec docker compose "$@"
 EOF
 fi
-# enable+start daemon (always try; warn if limited environments block it)
+# ensure compose plugin packages even on Debian docker.io
+if pkg_installed docker.io || pkg_installed docker-ce; then
+  ensure_optional_pkgs docker-compose-plugin docker-buildx-plugin
+fi
+
+# enable+start daemon (detect init system)
 log "Ensuring Docker daemon is enabled + running"
 if [ "$MODE" = "LIMITED" ]; then
   warn "LIMITED mode detected; docker service start may fail if cgroup/ns control is blocked"
 fi
-if command -v systemctl >/dev/null 2>&1; then
-  if systemctl list-unit-files | grep -q '^docker.service'; then
-    $SUDO systemctl enable --now docker || warn "systemctl enable/start docker failed (check logs)"
+if systemctl_usable; then
+  log "systemd detected; enabling docker.service"
+  if run_as_root systemctl list-unit-files | grep -q '^docker.service'; then
+    run_as_root systemctl enable --now docker || warn "systemctl enable/start docker failed (check logs)"
   else
     warn "docker.service missing; reinstalling Docker Engine packages"
     $SUDO apt-get install -y --reinstall docker-ce docker-ce-cli containerd.io 2>/dev/null || $SUDO apt-get install -y --reinstall docker.io 2>/dev/null || true
-    $SUDO systemctl daemon-reload || true
-    if systemctl list-unit-files | grep -q '^docker.service'; then
-      $SUDO systemctl enable --now docker || warn "systemctl enable/start docker failed after reinstall"
+    run_as_root systemctl daemon-reload || true
+    if run_as_root systemctl list-unit-files | grep -q '^docker.service'; then
+      run_as_root systemctl enable --now docker || warn "systemctl enable/start docker failed after reinstall"
     fi
   fi
 else
-  log "systemctl not available; attempting 'service docker start'"
-  $SUDO service docker start || warn "'service docker start' failed (non-systemd env?)"
+  pid1_name="$(cat /proc/1/comm 2>/dev/null || echo "unknown")"
+  warn "systemd not detected (PID 1 = ${pid1_name}). Using legacy Docker start."
+  if ! start_docker_without_systemd; then
+    warn "Legacy Docker start methods failed; start dockerd manually."
+  fi
 fi
 if have docker; then
   if wait_for_docker 12 2; then
     log "Docker daemon is reachable"
   else
-    warn "Docker daemon still unreachable after waiting; check 'sudo systemctl status docker'"
+    warn "Docker daemon still unreachable after waiting; check 'sudo systemctl status docker' or dockerd logs"
   fi
 fi
 # add user to group
