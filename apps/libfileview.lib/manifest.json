@@ -1,7 +1,7 @@
 {
 	"name": "File Viewer",
 	"icon": "files.png",
-	"package": "anura.fileviewer",
+	"package": "iridium.fileviewer",
 	"installHook": "install.js",
 	"versions": {
 		"1.0.0": "fileHandler.js"

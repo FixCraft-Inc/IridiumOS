@@ -24,7 +24,7 @@ export default function install(anura) {
 
 		await anura.fs.promises.writeFile(
 			directories["opt"] + "/anura.persistence/providers/anureg/index.js",
-			`const { PersistenceProvider } = await anura.import("anura.persistence");
+			`const { PersistenceProvider } = await anura.import("iridium.persistence");
 export default class Anureg extends PersistenceProvider {
     cache = {};
     fs;

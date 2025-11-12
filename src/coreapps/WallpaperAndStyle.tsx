@@ -5,7 +5,7 @@ type WallpaperObject = {
 
 class WallpaperAndStyle extends App {
 	name = "Wallpaper & Style";
-	package = "anura.wallpaper";
+	package = "iridium.wallpaper";
 	icon = "/assets/icons/wallpaper.png";
 
 	libfilepicker: {
@@ -708,7 +708,7 @@ class WallpaperAndStyle extends App {
 
 		if (this.libfilepicker === undefined) {
 			// Lazy load the filepicker library.
-			this.libfilepicker = await anura.import("anura.filepicker");
+			this.libfilepicker = await anura.import("iridium.filepicker");
 		}
 
 		win.content.appendChild(await this.page());

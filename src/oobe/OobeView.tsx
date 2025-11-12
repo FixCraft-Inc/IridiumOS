@@ -149,7 +149,7 @@ class OobeView {
 		{
 			elm: (
 				<div class="screen" id="welcome">
-					<h1>Welcome to AnuraOS</h1>
+					<h1>Welcome to IridiumOS</h1>
 					<div id="subtitle">Effortless. Modern. Powerful.</div>
 					<div id="gridContent">
 						<img id="animation" src="assets/oobe/welcome.gif" />
@@ -167,7 +167,7 @@ class OobeView {
 			elm: (
 				<div class="screen" id="features">
 					<h1>Choose your experience</h1>
-					<div id="subtitle">What kind of Anura user are you?</div>
+					<div id="subtitle">What kind of IridiumOS user are you?</div>
 					<label class="matter-checkbox">
 						<input
 							type="checkbox"
@@ -177,7 +177,7 @@ class OobeView {
 					</label>
 					<div class="sub">
 						<span class="material-symbols-outlined">info</span>
-						&nbsp;This allows you to use AnuraOS without an internet connection.
+						&nbsp;This allows you to use IridiumOS without an internet connection.
 					</div>
 					<br></br>
 					<label class="matter-checkbox">
@@ -186,7 +186,7 @@ class OobeView {
 					</label>
 					<div class="sub">
 						<span class="material-symbols-outlined">info</span>
-						&nbsp;This allows you to run Linux applications on AnuraOS.
+						&nbsp;This allows you to run Linux applications on IridiumOS.
 					</div>
 					<br></br>
 					<label class="matter-checkbox">
@@ -219,13 +219,13 @@ class OobeView {
 									anura.settings.set("use-sw-cache", this.state.offlineEnabled);
 									anura.settings.set("applist", [
 										...anura.settings.get("applist"),
-										this.state.v86Enabled ? "anura.term" : "anura.ashell",
+										this.state.v86Enabled ? "iridium.term" : "iridium.ashell",
 									]);
 
 									if (this.state.localfsdriver) {
 										await (window as any).idbKeyval.set("bootFromOPFS", true);
 										navigator.serviceWorker.controller?.postMessage({
-											anura_target: "anura.bootFromOPFS",
+											anura_target: "iridium.bootFromOPFS",
 											value: true,
 										});
 									}
@@ -268,7 +268,7 @@ class OobeView {
 					<div id="assetsDiv" style="display:none;"></div>
 					<h1>Downloading assets</h1>
 					<div id="subtitle" style="color: white;">
-						For the best experience, AnuraOS needs to download required assets.
+						For the best experience, IridiumOS needs to download required assets.
 					</div>
 					<img src="/assets/oobe/spinner.gif" />
 					<br />
@@ -277,7 +277,7 @@ class OobeView {
 			),
 			on: async () => {
 				await navigator.serviceWorker.controller!.postMessage({
-					anura_target: "anura.cache",
+					anura_target: "iridium.cache",
 					value: anura.settings.get("use-sw-cache"),
 				});
 				this.state.color = "var(--material-bg)";

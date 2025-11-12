@@ -1,6 +1,6 @@
 # Browser specific Quirks
 
-This is a list of known issues with other browsers that may affect usability of Anura
+This is a list of known issues with other browsers that may affect usability of IridiumOS.
 
 ## Firefox
 

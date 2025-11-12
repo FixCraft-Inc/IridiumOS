@@ -2,7 +2,7 @@
 export default async function install(_, filePickerLib) {
 	const { selectFile, selectFolder } = await filePickerLib.getImport();
 	top.navigator.serviceWorker.addEventListener("message", async (event) => {
-		if (event.data.anura_target === "anura.filepicker") {
+		if (event.data.anura_target === "iridium.filepicker") {
 			if (event.data.type === "folder") {
 				let folders;
 				let cancelled = false;
@@ -16,7 +16,7 @@ export default async function install(_, filePickerLib) {
 					cancelled = true;
 				}
 				top.navigator.serviceWorker.controller.postMessage({
-					anura_target: "anura.filepicker.result",
+					anura_target: "iridium.filepicker.result",
 					id: event.data.id,
 					value: {
 						folders,
@@ -37,7 +37,7 @@ export default async function install(_, filePickerLib) {
 					cancelled = true;
 				}
 				top.navigator.serviceWorker.controller.postMessage({
-					anura_target: "anura.filepicker.result",
+					anura_target: "iridium.filepicker.result",
 					id: event.data.id,
 					value: {
 						files,

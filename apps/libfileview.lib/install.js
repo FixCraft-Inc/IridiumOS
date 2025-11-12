@@ -1,7 +1,7 @@
 const icons = await (await fetch(localPathToURL("icons.json"))).json();
 
 // This constant is our own ID. It is used when registering the library.
-const HANDLER = "anura.fileviewer";
+const HANDLER = "iridium.fileviewer";
 
 // This is the list of file extensions that we will handle
 const defaultHandlers = [...icons.files.map((file) => file.ext), "default"];

@@ -1,7 +1,7 @@
 {
 	"name": "Template",
 	"type": "auto",
-	"package": "anura.TEMPLATE",
+	"package": "iridium.TEMPLATE",
 	"index": "index.html",
 	"icon": "terminal.svg",
 	"wininfo": {

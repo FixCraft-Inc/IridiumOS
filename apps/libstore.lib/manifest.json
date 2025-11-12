@@ -1,7 +1,7 @@
 {
 	"name": "Store",
 	"icon": "google-play.svg",
-	"package": "anura.libstore",
+	"package": "iridium.libstore",
 	"versions": {
 		"2.0.0": "index.js"
 	},

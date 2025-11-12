@@ -1,7 +1,7 @@
 #! {"lang":"module"}
 
 // Anura Daemon Helpers library is used for dependency management in init scripts
-const { need, after } = await anura.import("anura.daemon.helpers");
+const { need, after } = await anura.import("iridium.daemon.helpers");
 
 // The name of the module, which will also be the name of the process
 export const name = "example";
@@ -14,11 +14,11 @@ export const description = "Example module";
 // All dependencies should be declared here.
 export const depend = async () => {
     // Wait for the net and notifications apis to be ready
-    await need("anura.net");
-    await need("anura.notifications");
+    await need("iridium.net");
+    await need("iridium.notifications");
 
     // Wait for the boot stage to complete
-    await after("anura.boot");
+    await after("iridium.boot");
 };
 
 const interval = 5;

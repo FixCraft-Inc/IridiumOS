@@ -1,4 +1,4 @@
-const hterm = (await anura.import("anura.hterm")).default;
+const hterm = (await anura.import("iridium.hterm")).default;
 const exit = env.process.kill.bind(env.process);
 
 const url = new URL(window.location.href);

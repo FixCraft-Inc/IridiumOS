@@ -1,7 +1,7 @@
 {
 	"name": "File Picker",
 	"icon": "files.png",
-	"package": "anura.filepicker",
+	"package": "iridium.filepicker",
 	"versions": {
 		"1.0.0": "handler.js"
 	},

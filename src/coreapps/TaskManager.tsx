@@ -1,7 +1,7 @@
 // probably some of the most clusterfucked code i've written - fish
 class TaskManager extends App {
 	name = "Task Manager";
-	package = "anura.taskmgr";
+	package = "iridium.taskmgr";
 	icon = "/assets/icons/system-monitor.svg";
 
 	// incomprehensible css
@@ -186,7 +186,7 @@ class TaskManager extends App {
 												alt="app"
 												class="icon"
 												src={(() => {
-													let icon = anura.apps["anura.generic"].icon;
+													let icon = anura.apps["iridium.generic"].icon;
 													const process = proc.deref();
 													if (process instanceof WMWindow && process.app) {
 														icon = process.app.icon;

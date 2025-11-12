@@ -51,7 +51,7 @@ class AnuraUI {
 		});
 
 		anura.settings.set(
-			"anura.ui.components",
+			"iridium.ui.components",
 			Array.from(this.components.entries()),
 		);
 	}
@@ -154,7 +154,7 @@ class AnuraUI {
 	 * Install internal components
 	 */
 	init() {
-		const components = anura.settings.get("anura.ui.components");
+		const components = anura.settings.get("iridium.ui.components");
 
 		if (components) {
 			try {

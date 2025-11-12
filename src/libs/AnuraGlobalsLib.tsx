@@ -3,7 +3,7 @@
  */
 class AnuraGlobalsLib extends Lib {
 	icon = "/assets/icons/generic.svg";
-	package = "anura.globalscope";
+	package = "iridium.globalscope";
 	name = "Anura Global Objects";
 	latestVersion = anura.version.pretty;
 

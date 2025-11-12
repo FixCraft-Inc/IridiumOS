@@ -171,13 +171,13 @@ tsc:
 	mkdir -p build/artifacts
 	cp -r src/* build/artifacts
 	npx tsc
-	mkdir -p anuraos-types
-	cd anuraos-types/; \
+	mkdir -p iridiumos-types
+	cd iridiumos-types/; \
 	mkdir -p lib/
 	cd build/; \
-	(find lib -type f -name "*.d.ts" -exec cp --parents {} ../anuraos-types/ \;)
-	(cd build && find lib -type f -name "*.d.ts") | sed 's/ \+/\n/g' | sed 's|.*|/// <reference path="&" />|' > anuraos-types/index.d.ts
-	jq 'del(.dependencies, .devDependencies) | .name = "@mercuryworkshop/anuraos-types" | .description = "Type declarations for anuraOS" | .types = "index.d.ts"' package.json > anuraos-types/package.json
+	(find lib -type f -name "*.d.ts" -exec cp --parents {} ../iridiumos-types/ \;)
+	(cd build && find lib -type f -name "*.d.ts") | sed 's/ \+/\n/g' | sed 's|.*|/// <reference path="&" />|' > iridiumos-types/index.d.ts
+	jq 'del(.dependencies, .devDependencies) | .name = "@fixcraft-inc/iridiumos-types" | .description = "Type declarations for IridiumOS" | .types = "index.d.ts"' package.json > iridiumos-types/package.json
 	
 css: src/*.css
 	# shopt -s globstar; cat src/**/*.css | npx postcss --use autoprefixer -o build/bundle.css

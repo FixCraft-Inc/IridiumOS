@@ -1,7 +1,7 @@
 {
 	"name": "libhterm",
 	"icon": "terminal.svg",
-	"package": "anura.hterm",
+	"package": "iridium.hterm",
 	"versions": {
 		"1.92.1": "versions/1.92.1/index.js"
 	},

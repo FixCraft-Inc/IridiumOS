@@ -1,6 +1,6 @@
 class x86MgrApp extends App {
 	name = "x86 Manager";
-	package = "anura.x86mgr";
+	package = "iridium.x86mgr";
 	icon = "/assets/icons/xorg.svg";
 
 	constructor() {

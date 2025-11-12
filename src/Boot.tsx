@@ -41,7 +41,7 @@ channel.addEventListener("message", (msg) => {
             </head>
             <body>
             <div id="wrapper">
-            <h1>AnuraOS is already running in another tab</h1>
+			<h1>IridiumOS is already running in another tab</h1>
             <p>Please close the other tab and reload, lol.</p>
             </div>
             </body>
@@ -156,7 +156,7 @@ window.addEventListener("load", async () => {
 		const { port1, port2 } = new MessageChannel();
 
 		const msg = {
-			anura_target: "anura.comlink.init",
+			anura_target: "iridium.comlink.init",
 			value: port2,
 		};
 
@@ -165,17 +165,17 @@ window.addEventListener("load", async () => {
 		navigator.serviceWorker.controller!.postMessage(msg, [port2]);
 		if (swShared.anura)
 			navigator.serviceWorker.controller!.postMessage({
-				anura_target: "anura.nohost.set",
+				anura_target: "iridium.nohost.set",
 			});
 	}
 
 	navigator.serviceWorker.addEventListener("controllerchange", initComlink);
 
-	await navigator.serviceWorker.register("/anura-sw.js");
+	await navigator.serviceWorker.register("/iridium-sw.js");
 	initComlink();
 
 	navigator.serviceWorker.addEventListener("message", (event) => {
-		if (event.data.anura_target === "anura.sw.reinit") initComlink(); // this could accidentally be run twice but realistically there aren't any consequences for doing so
+		if (event.data.anura_target === "iridium.sw.reinit") initComlink(); // this could accidentally be run twice but realistically there aren't any consequences for doing so
 	});
 
 	// Create "Process" that controls the service worker
@@ -202,7 +202,7 @@ window.addEventListener("load", async () => {
 					const tracker_br = document.getElementById("systemstatus-br")!;
 					tracker.style.display = "unset";
 					tracker_br.style.display = "unset";
-					tracker.innerText = "Anura is updating your system...";
+					tracker.innerText = "IridiumOS is updating your system...";
 					try {
 						await new anura.fs.Shell().promises.rm("/anura_files", {
 							recursive: true,
@@ -218,7 +218,7 @@ window.addEventListener("load", async () => {
 		} else {
 			// Domain is either expired or some non conformant milestone is being delivered (bad extension?)
 			// Either way, ignore and dont try and perform an update
-			console.log("Anura update poisoning detected...");
+			console.log("IridiumOS update poisoning detected...");
 		}
 	}
 
@@ -230,11 +230,11 @@ window.addEventListener("load", async () => {
 
 	anura.anurad = anurad;
 	anura.processes.register(anurad);
-	AnuradHelpers.setReady("anura.anurad");
+	AnuradHelpers.setReady("iridium.anurad");
 
 	Object.entries(anura)
 		.filter(([_, v]) => v !== undefined)
-		.map(([k]) => "anura." + k)
+		.map(([k]) => "iridium." + k)
 		.forEach(AnuradHelpers.setReady);
 
 	/**
@@ -255,8 +255,8 @@ window.addEventListener("load", async () => {
 
 	/**
 	 * This is a migration for the new directory structure
-	 * introduced in AnuraOS 2.0.0. This is to ensure that
-	 * users who have been using AnuraOS for a while can
+	 * introduced in IridiumOS 2.0.0. This is to ensure that
+	 * users who have been using IridiumOS for a while can
 	 * have a consistent experience with new installations.
 	 */
 	const map = {
@@ -426,7 +426,7 @@ window.addEventListener("load", async () => {
 				if (handler === "/apps/libfileview.app/fileHandler.js") {
 					extHandlers[ext] = {
 						handler_type: "module",
-						id: "anura.fileviewer",
+						id: "iridium.fileviewer",
 					};
 					continue;
 				}
@@ -460,7 +460,7 @@ window.addEventListener("load", async () => {
 });
 
 document.addEventListener("anura-boot-completed", async () => {
-	AnuradHelpers.setStage("anura.boot");
+	AnuradHelpers.setStage("iridium.boot");
 	if (anura.settings.get("oobe-complete")) {
 		document.dispatchEvent(new Event("anura-login-completed"));
 	} else {
@@ -469,11 +469,11 @@ document.addEventListener("anura-boot-completed", async () => {
 });
 
 document.addEventListener("anura-login-completed", async () => {
-	AnuradHelpers.setStage("anura.login");
+	AnuradHelpers.setStage("iridium.login");
 	const directories = anura.settings.get("directories");
 	anura.ui.theme = Theme.new(anura.settings.get("theme"));
 	anura.ui.theme.apply();
-	AnuradHelpers.setReady("anura.ui.theme");
+	AnuradHelpers.setReady("iridium.ui.theme");
 
 	const generic = new GenericApp();
 	anura.registerApp(generic);
@@ -505,7 +505,7 @@ document.addEventListener("anura-login-completed", async () => {
 	const dialog = new Dialog();
 	const dialogApp = await anura.registerApp(dialog);
 	(anura.dialog as any) = dialogApp;
-	AnuradHelpers.setReady("anura.dialog");
+	AnuradHelpers.setReady("iridium.dialog");
 
 	wallpaper.setWallpaper(
 		anura.settings.get("wallpaper") ||
@@ -616,7 +616,7 @@ document.addEventListener("anura-login-completed", async () => {
 	document.body.appendChild(taskbar.element);
 	document.body.appendChild(alttab.element);
 	anura.systray = new Systray();
-	AnuradHelpers.setReady("anura.systray");
+	AnuradHelpers.setReady("iridium.systray");
 
 	anura.ui.theme.apply();
 
@@ -645,7 +645,7 @@ document.addEventListener("anura-login-completed", async () => {
 		"Set wallpaper & style",
 		() => {
 			// this however will execute after anura is init'ed
-			anura.apps["anura.wallpaper"].open();
+			anura.apps["iridium.wallpaper"].open();
 		},
 		"brush",
 	);
@@ -682,7 +682,7 @@ document.addEventListener("anura-login-completed", async () => {
 	});
 
 	anura.initComplete = true;
-	AnuradHelpers.setReady("anura.initComplete");
+	AnuradHelpers.setReady("iridium.initComplete");
 	taskbar.updateTaskbar();
 	alttab.update();
 
@@ -698,11 +698,11 @@ async function bootx86() {
 	await anura.registerApp(new XFrogApp());
 
 	await anura.registerApp(
-		new XAppStub("X Calculator", "anura.xcalc", "", "xcalc"),
+		new XAppStub("X Calculator", "iridium.xcalc", "", "xcalc"),
 	);
-	await anura.registerApp(new XAppStub("XTerm", "anura.xterm", "", "xterm"));
+	await anura.registerApp(new XAppStub("XTerm", "iridium.xterm", "", "xterm"));
 	anura.x86 = new V86Backend(anura.x86hdd);
-	AnuradHelpers.setReady("anura.x86");
+	AnuradHelpers.setReady("iridium.x86");
 
 	anura.settings
 		.get("user-xapps")
@@ -710,7 +710,7 @@ async function bootx86() {
 			console.debug("registering user xapp", stub);
 			anura.registerApp(new XAppStub(stub.name, stub.id, "", stub.cmd));
 		});
-	AnuradHelpers.setStage("anura.bootx86");
+	AnuradHelpers.setStage("iridium.bootx86");
 }
 async function bootUserCustomizations() {
 	const directories = anura.settings.get("directories");
@@ -721,11 +721,11 @@ async function bootUserCustomizations() {
 		const recovery = new RecoveryApp();
 		anura.registerApp(recovery);
 		anura.notifications.add({
-			title: "Anura Error",
+			title: "IridiumOS Error",
 			description:
-				"Anura has detected a system fault and booted in safe mode. Click this notification to enter the recovery app.",
+				"IridiumOS detected a system fault and booted in safe mode. Click this notification to enter the recovery app.",
 			timeout: "never",
-			callback: () => anura.apps["anura.recovery"].open(),
+			callback: () => anura.apps["iridium.recovery"].open(),
 		});
 
 		const safeMode = document.createElement("span");
@@ -764,7 +764,7 @@ async function bootUserCustomizations() {
 						const process = anura.processes.create(script);
 						process.title = file;
 					} catch (e) {
-						anura.logger.error("Anura failed to load a script " + e);
+						anura.logger.error("IridiumOS failed to load a script " + e);
 					}
 				}
 			}
@@ -781,7 +781,7 @@ async function bootUserCustomizations() {
 			try {
 				await anura.registerExternalLib(`/fs/${directories["libs"]}/${file}/`);
 			} catch (e) {
-				anura.logger.error("Anura failed to load a lib", e);
+				anura.logger.error("IridiumOS failed to load a lib", e);
 			}
 		}
 	} catch (e) {
@@ -802,7 +802,7 @@ async function bootUserCustomizations() {
 							`/fs/${directories["apps"]}/${file}/`,
 						);
 					} catch (e) {
-						anura.logger.error("Anura failed to load an app", e);
+						anura.logger.error("IridiumOS failed to load an app", e);
 					}
 				} else {
 					// This is a shortcut file
@@ -819,7 +819,7 @@ async function bootUserCustomizations() {
 		anura.logger.error(e);
 	}
 
-	AnuradHelpers.setStage("anura.bootUserCustomizations");
+	AnuradHelpers.setStage("iridium.bootUserCustomizations");
 }
 
 function setupTNBootsplash() {
@@ -828,7 +828,7 @@ function setupTNBootsplash() {
 	TNMark.innerHTML =
 		"Instance hosted by Titanium Network.<br>More mirrors at discord.gg/unblock";
 	TNMark.onclick = () => {
-		anura.apps["anura.browser"].open([
+		anura.apps["iridium.browser"].open([
 			"https://discord.com/invite/unblock/login",
 		]);
 	};

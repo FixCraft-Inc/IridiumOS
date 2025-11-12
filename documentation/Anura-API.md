@@ -35,12 +35,12 @@ This API is used to import libraries. These libraries are similar to apps and ca
 **Usage:**
 
 ```js
-const browser = await anura.import("anura.libbrowser");
+const browser = await anura.import("iridium.libbrowser");
 
 browser.openTab("https://google.com/");
 ```
 
-AnuraOS provides some preinstalled libraries to help streamline the development experience. This includes the browser library as shown above, along with the anura persistence library and the file picker.
+IridiumOS provides some preinstalled libraries to help streamline the development experience. This includes the browser library as shown above, along with the anura persistence library and the file picker.
 
 You can find the documentation for the preinstalled libraries [here](./appdevt.md#system-libraries).
 
@@ -455,7 +455,7 @@ This method takes an anura library that has an `openFile` function that takes a 
 **Usage:**
 
 ```js
-anura.files.setModule("anura.fileviewer", "png"); // set anura.fileviewer library as default handler for png
+anura.files.setModule("iridium.fileviewer", "png"); // set anura.fileviewer library as default handler for png
 ```
 
 ## anura.uri
@@ -488,7 +488,7 @@ anura.uri.set("https", {
         // Specifies that the handler is a library
         tag: "lib",
         // The package name of the library
-        pkg: "anura.browser,
+        pkg: "iridium.browser,
         // The (optional) version of the library
         version: "1.0.0",
         // The function to call in the library

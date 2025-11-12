@@ -1,5 +1,5 @@
 {
-	"name": "AnuraOS",
+	"name": "IridiumOS",
 	"icons": [
 		{
 			"src": "pwa_icon.png",
@@ -8,7 +8,7 @@
 			"purpose": "any maskable"
 		}
 	],
-	"short_name": "AnuraOS",
+	"short_name": "IridiumOS",
 	"start_url": "/",
 	"display_override": [
 		"window-controls-overlay",
@@ -18,5 +18,5 @@
 	],
 	"display": "standalone",
 	"background_color": "#000",
-	"description": "A webOS and development environment powered by v86"
+	"description": "IridiumOS is a privacy-focused webOS and development environment powered by v86"
 }

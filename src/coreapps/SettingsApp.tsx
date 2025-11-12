@@ -222,7 +222,7 @@ const SettingText: Component<{
 
 class SettingsApp extends App {
 	name = "Settings";
-	package = "anura.settings";
+	package = "iridium.settings";
 	icon = "/assets/icons/settings.png";
 	win: WMWindow;
 

@@ -1,6 +1,6 @@
 class XFrogApp extends App {
 	name = "XFrog86";
-	package = "anura.xfrog";
+	package = "iridium.xfrog";
 	icon = "/assets/icons/xfrog.png";
 	hidden = true;
 	activeWin: WMWindow;

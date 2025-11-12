@@ -16,11 +16,11 @@
 		"/bin/chimerix.ajs",
 		"/bin/x86-run.ajs",
 		"/bin/vista.ajs",
-		"/bin/anuractrl.ajs"
+		"/bin/iridiumctrl.ajs"
 	],
 	"defaultsettings": {
 		"use-sw-cache": false,
-		"applist": ["anura.browser", "anura.settings", "anura.fsapp"],
+		"applist": ["iridium.browser", "iridium.settings", "iridium.fsapp"],
 		"clampWindows": true,
 		"launcher-keybind": true,
 		"relay-url": "wss://relay.widgetry.org/"

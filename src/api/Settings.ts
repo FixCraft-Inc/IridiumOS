@@ -7,7 +7,7 @@ class Settings {
 
 		navigator.serviceWorker.ready.then((isReady) => {
 			isReady.active!.postMessage({
-				anura_target: "anura.cache",
+				anura_target: "iridium.cache",
 				value: this.cache["use-sw-cache"],
 			});
 			console.debug(
@@ -98,7 +98,7 @@ class Settings {
 	}
 	async remove(prop: string, subprop?: string) {
 		console.warn(
-			"anura.settings.remove() is a debug feature, and should not be used outside of development.",
+			"iridium.settings.remove() is a debug feature, and should not be used outside of development.",
 		);
 		if (subprop) {
 			delete this.cache[prop][subprop];

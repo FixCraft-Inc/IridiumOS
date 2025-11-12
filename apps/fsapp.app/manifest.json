@@ -1,7 +1,7 @@
 {
 	"name": "File Manager",
 	"type": "auto",
-	"package": "anura.fsapp",
+	"package": "iridium.fsapp",
 	"index": "index.html",
 	"icon": "files.png",
 	"wininfo": {

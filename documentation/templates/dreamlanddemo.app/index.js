@@ -1,4 +1,4 @@
-const { buildLoader } = await anura.import("anura.persistence");
+const { buildLoader } = await anura.import("iridium.persistence");
 const loader = buildLoader(anura);
 await loader.locate();
 

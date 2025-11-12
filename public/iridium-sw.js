@@ -346,15 +346,15 @@ const callbacks = {};
 const filepickerCallbacks = {};
 
 addEventListener("message", async (event) => {
-	if (event.data.anura_target === "anura.x86.proxy") {
+	if (event.data.anura_target === "iridium.x86.proxy") {
 		let callback = callbacks[event.data.id];
 		callback(event.data.value);
 	}
-	if (event.data.anura_target === "anura.cache") {
+	if (event.data.anura_target === "iridium.cache") {
 		cacheenabled = event.data.value;
 		idbKeyval.set("cacheenabled", event.data.value);
 	}
-	if (event.data.anura_target === "anura.bootFromOPFS") {
+	if (event.data.anura_target === "iridium.bootFromOPFS") {
 		if (event.data.value) {
 			opfs = await LocalFS.newRootOPFS();
 			globalThis.anura = { fs: opfs }; // Stupid thing for AFSShell compat
@@ -364,16 +364,16 @@ addEventListener("message", async (event) => {
 			opfssh = undefined;
 		}
 	}
-	if (event.data.anura_target === "anura.filepicker.result") {
+	if (event.data.anura_target === "iridium.filepicker.result") {
 		let callback = filepickerCallbacks[event.data.id];
 		callback(event.data.value);
 	}
-	if (event.data.anura_target === "anura.comlink.init") {
+	if (event.data.anura_target === "iridium.comlink.init") {
 		self.swShared = Comlink.wrap(event.data.value);
 		swShared.test.then(console.log);
 		self.isConnected = swShared.test;
 	}
-	if (event.data.anura_target === "anura.nohost.set") {
+	if (event.data.anura_target === "iridium.nohost.set") {
 		self.anurafs = swShared.anura.fs;
 		self.anurash = swShared.sh;
 	}
@@ -404,7 +404,7 @@ workbox.routing.registerRoute(
 		let type = url.searchParams.get("type") || "file";
 
 		client.postMessage({
-			anura_target: "anura.filepicker",
+			anura_target: "iridium.filepicker",
 			regex,
 			id,
 			type,
@@ -780,7 +780,7 @@ function offlineError() {
             </head>
             <body>
             <div id="wrapper">
-            <h1>AnuraOS is offline without offline support enabled.</h1>
+            <h1>IridiumOS is offline without offline support enabled.</h1>
             <p>If you have offline support enabled and you are seeing this, please refresh the page.</p>
             </div>
             </body>
@@ -791,7 +791,7 @@ function offlineError() {
 async function initSw() {
 	for (const client of await self.clients.matchAll()) {
 		client.postMessage({
-			anura_target: "anura.sw.reinit",
+			anura_target: "iridium.sw.reinit",
 		});
 	}
 }

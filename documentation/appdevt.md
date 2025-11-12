@@ -1,10 +1,10 @@
-# The Hitchhiker's Guide to AnuraOS App Development
+# The Hitchhiker's Guide to IridiumOS App Development
 
 See [this document](./templates/template.app/README.md) for instructions on how to set up a basic iFrame app.
 
-## AnuraOS Apps
+## IridiumOS Apps
 
-AnuraOS apps are simple creatures. They live inside folders with the suffix `.app` and the resources specific to each app are contained within that folder.
+IridiumOS apps are simple creatures. They live inside folders with the suffix `.app` and the resources specific to each app are contained within that folder.
 
 ### Manifest
 
@@ -116,7 +116,7 @@ win.onunmaximize: () => void;
 
 ```js
 if (instance.manifest.marketplace) {
-	let libstore = await anura.import("anura.libstore@2.0.0");
+	let libstore = await anura.import("iridium.libstore@2.0.0");
 
 	marketplace = new libstore.Store(anura.net, {
 		onError: (appName, error) => {
@@ -168,7 +168,7 @@ if (instance.manifest.marketplace) {
 
 dreamland.js is a reactive JSX-inspired rendering library with no virtual dom and no build step. You can find the source code [here](https://github.com/MercuryWorkshop/dreamlandjs) and the documentation [here](https://dreamland.js.org/).
 
-AnuraOS itself uses dreamland for the desktop environment and core system apps, and you can use it in your apps as well. To include dreamland in your app without a bundler, you can add the following to the `head` section of your `index.html` file:
+IridiumOS itself uses dreamland for the desktop environment and core system apps, and you can use it in your apps as well. To include dreamland in your app without a bundler, you can add the following to the `head` section of your `index.html` file:
 
 ```html
 <script src="/libs/dreamland/all.js"></script>
@@ -177,7 +177,7 @@ AnuraOS itself uses dreamland for the desktop environment and core system apps, 
 While dreamland itself includes a `$store` function for preserving state between page reloads, this function is not available by default. Instead, you can use the [`anura.persistence`](#libpersist) library to build a `$store` function bound to your app instance.
 
 ```jsx
-const { buildLoader } = await anura.import("anura.persistence");
+const { buildLoader } = await anura.import("iridium.persistence");
 const loader = buildLoader(anura);
 await loader.locate();
 
@@ -217,9 +217,9 @@ document.body.appendChild(<App />);
 
 A demo app using dreamland can be found [here](/apps/dreamlanddemo.app/index.js). This app is the same as the `$store` example above, but using the `html` tag function instead of JSX to demonstrate that dreamland can be used without a build step.
 
-## AnuraOS Libraries
+## IridiumOS Libraries
 
-AnuraOS libraries are just like apps but contain utilities or functionality that other apps could import and use. They live inside folders with the suffix `.lib` and the resources specific to each app are contained within that folder.
+IridiumOS libraries are just like apps but contain utilities or functionality that other apps could import and use. They live inside folders with the suffix `.lib` and the resources specific to each app are contained within that folder.
 
 ### Manifest
 
@@ -229,7 +229,7 @@ AnuraOS libraries are just like apps but contain utilities or functionality that
   {
   	"name": "Example Library",
   	"icon": "libtest.png",
-  	"package": "anura.examplelib",
+  	"package": "iridium.examplelib",
   	"versions": {
   		"0.0.1": "deprecated/0.0.1/index.js",
   		"1.0.0": "index.js"
@@ -251,13 +251,13 @@ AnuraOS libraries are just like apps but contain utilities or functionality that
 - Libraries can be imported using the [`anura.import`](./Anura-API.md#anuraimport) api. This api takes the package id of the library and an optional version number. The version number is specified by appending `@<version>` to the package id. If no version is specified, the current version of the library is used.
 
 ```js
-anura.import("anura.examplelib@1.0.0").then((lib) => {
+anura.import("iridium.examplelib@1.0.0").then((lib) => {
 	// Do stuff with the library.
 });
 ```
 
 ```js
-let lib = await anura.import("anura.examplelib");
+let lib = await anura.import("iridium.examplelib");
 // Do stuff with the library.
 ```
 
@@ -272,7 +272,7 @@ This library allows you to interact with Anura's browser. Instead of using `wind
 Usage:
 
 ```js
-const browser = await anura.import("anura.libbrowser");
+const browser = await anura.import("iridium.libbrowser");
 
 browser.openTab("https://google.com/");
 ```
@@ -282,7 +282,7 @@ browser.openTab("https://google.com/");
 This library allows you to select files from inside of anura's filesystem. It returns a path(s) and supports both files and folders.
 
 ```js
-let picker = await anura.import("anura.filepicker");
+let picker = await anura.import("iridium.filepicker");
 // select file of any type
 let file = await picker.selectFile();
 // regex supported
@@ -303,7 +303,7 @@ This library allows you to create and manage persistent data stores. It uses the
 The default storage backend uses the same format as the [`anura.settings`](./Anura-API.md#anurasettings) api, except that it is stored in a file related to the app's data directory instead of in the root settings file. The persistence library also has the ability to be turned into a proxy object that will automatically save changes to the persistence store.
 
 ```js
-let persist = await anura.import("anura.persistence");
+let persist = await anura.import("iridium.persistence");
 let loader = persist.buildLoader(anura);
 await loader.locate();
 // instance is a global variable in external apps that contains the app's instance

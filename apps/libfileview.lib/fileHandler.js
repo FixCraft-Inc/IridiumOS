@@ -1,6 +1,6 @@
 import { createAppView, getAppIcon } from "./pages/appview/appview.js";
 
-const { ShortcutApp } = await anura.import("anura.globalscope");
+const { ShortcutApp } = await anura.import("iridium.globalscope");
 
 const icons = await (await fetch(localPathToURL("icons.json"))).json();
 

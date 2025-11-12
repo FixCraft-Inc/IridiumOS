@@ -224,7 +224,7 @@ class ExternalApp extends App {
 					process: win,
 				},
 				open: async (url: string | URL) => {
-					const browser = await anura.import("anura.libbrowser");
+					const browser = await anura.import("iridium.libbrowser");
 					browser.openTab(url);
 				},
 			});

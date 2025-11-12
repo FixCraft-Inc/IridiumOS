@@ -44,7 +44,7 @@ class WMAPI {
 	}
 	createGeneric(info: object): WMWindow {
 		const win = AliceWM.create(info as unknown as any);
-		const ctx = anura.apps["anura.generic"];
+		const ctx = anura.apps["iridium.generic"];
 		win.focus();
 
 		win.addEventListener("focus", (event) => {

@@ -1,12 +1,12 @@
 {
-	"name": "@mercuryworkshop/anuraos-types",
+	"name": "@fixcraft-inc/iridiumos-types",
 	"version": "$VER",
-	"description": "Type declarations for anuraOS",
+	"description": "Type declarations for IridiumOS",
 	"types": "index.d.ts",
-	"author": "Mercury Workshop",
+	"author": "F1xGOD",
 	"license": "AGPL-3.0-only",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/MercuryWorkshop/AnuraOS.git"
+		"url": "git+https://github.com/FixCraft-Inc/IridiumOS.git"
 	}
 }

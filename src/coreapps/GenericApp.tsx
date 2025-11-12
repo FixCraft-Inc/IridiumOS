@@ -1,6 +1,6 @@
 class GenericApp extends App {
 	name = "Generic App";
-	package = "anura.generic";
+	package = "iridium.generic";
 	icon = "/assets/icons/generic.svg";
 	hidden = true;
 	constructor() {

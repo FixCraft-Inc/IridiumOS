@@ -679,12 +679,12 @@ class AnuraFilesystem implements AnuraFSOperations<any> {
 			return await workingPath.getFileHandle(file);
 		},
 		showDirectoryPicker: async (options: object) => {
-			const picker = await anura.import("anura.filepicker");
+			const picker = await anura.import("iridium.filepicker");
 			const path = await picker.selectFolder();
 			return await this.whatwgfs.directoryHandleFromPath(path);
 		},
 		showOpenFilePicker: async (options: object) => {
-			const picker = await anura.import("anura.filepicker");
+			const picker = await anura.import("iridium.filepicker");
 			const path = await picker.selectFile();
 			return await this.whatwgfs.fileHandleFromPath(path);
 		},

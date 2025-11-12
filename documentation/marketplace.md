@@ -101,7 +101,7 @@ Here is an example of a manifest.json
 	"icon": "example.png",
 	"summary": "(tiny app description)",
 	"desc": "(longer app description)",
-	"package": "anura.example",
+	"package": "iridium.example",
 	"data": "app.zip",
 	"installHook": "install.js",
 	"screenshots": [
@@ -141,7 +141,7 @@ To initialize the libstore library, call the `Store` constructor with a networki
 **Usage:**
 
 ```js
-let libstore = await anura.import("anura.libstore@2.0.0");
+let libstore = await anura.import("iridium.libstore@2.0.0");
 
 marketplace = new libstore.Store(anura.net, {
 	onError: (appName, error) => {
@@ -260,7 +260,7 @@ apps.forEach((app) => {
 This method grabs an app based on its package identifier if it is >=2.0 or takes in a package name if its legacy and then returns its app details in an object.
 
 ```js
-let app = await repo.getApp("anura.ide");
+let app = await repo.getApp("iridium.ide");
 console.log("App Data: ", app);
 ```
 
@@ -269,7 +269,7 @@ console.log("App Data: ", app);
 This method installs an app based on its package identifier if it is >=2.0 or takes in a package name if its legacy.
 
 ```js
-await repo.installApp("anura.ide");
+await repo.installApp("iridium.ide");
 ```
 
 #### repo.getAppThumb: `string | undefined`
@@ -277,7 +277,7 @@ await repo.installApp("anura.ide");
 This method grabs a app icon based on its package identifier if it is >=2.0 or takes in a package name if its legacy and then returns a blob url of the icon.
 
 ```js
-let icon = await repo.getAppThumb("anura.ide");
+let icon = await repo.getAppThumb("iridium.ide");
 let element = document.createElement("img");
 element.src = icon;
 document.body.appendChild(element);
@@ -299,7 +299,7 @@ libs.forEach((lib) => {
 This method grabs an library based on its package identifier if it is >=2.0 or takes in a package name if its legacy and then returns its library details in an object.
 
 ```js
-let lib = await repo.getlib("anura.flash.handler");
+let lib = await repo.getlib("iridium.flash.handler");
 console.log("Library Data: ", lib);
 ```
 
@@ -308,7 +308,7 @@ console.log("Library Data: ", lib);
 This method installs an library based on its package identifier if it is >=2.0 or takes in a package name if its legacy.
 
 ```js
-await repo.installLib("anura.flash.handler");
+await repo.installLib("iridium.flash.handler");
 ```
 
 #### repo.getLibThumb: `string | undefined`
@@ -316,7 +316,7 @@ await repo.installLib("anura.flash.handler");
 This method grabs a library icon based on its package identifier if it is >=2.0 or takes in a package name if its legacy and then returns a blob url of the icon.
 
 ```js
-let icon = await repo.getLibThumb("anura.flash.handler");
+let icon = await repo.getLibThumb("iridium.flash.handler");
 let element = document.createElement("img");
 element.src = icon;
 document.body.appendChild(element);

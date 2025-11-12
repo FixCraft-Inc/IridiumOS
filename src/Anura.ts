@@ -161,7 +161,7 @@ class Anura {
 		if (!handlers || !handlers[manifest.type]) {
 			const error = `Could not register external app from source: "${source}" because no external handlers are registered for type "${manifest.type}"`;
 			anura.notifications.add({
-				title: "AnuraOS",
+				title: "IridiumOS",
 				description: error,
 			});
 			throw error;
@@ -171,7 +171,7 @@ class Anura {
 		if (!handlerModule) {
 			const error = `Failed to load external app handler ${handler}`;
 			anura.notifications.add({
-				title: "AnuraOS",
+				title: "IridiumOS",
 				description: error,
 			});
 			throw error;
@@ -179,7 +179,7 @@ class Anura {
 		if (!handlerModule.createApp) {
 			const error = `Handler ${handler} does not have a createApp function`;
 			anura.notifications.add({
-				title: "AnuraOS",
+				title: "IridiumOS",
 				description: error,
 			});
 			throw error;

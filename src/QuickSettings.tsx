@@ -309,7 +309,7 @@ class QuickSettings {
 						<button
 							class={["matter-button-contained", "symbolButton"]}
 							on:click={() => {
-								anura.apps["anura.settings"].open();
+								anura.apps["iridium.settings"].open();
 								this.close();
 							}}
 						>

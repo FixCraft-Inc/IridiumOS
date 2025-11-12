@@ -17,7 +17,7 @@ IridiumOS uses the features of a PWA (Progressive Web App) to make its environme
 IridiumOS shows as more of a proof‑of‑concept with what's possible on the modern web rather than an actual product. However, it proves useful in many actual cases and is a useful educational tool.
 ![](/assets/showcase.png)
 
-## Security & UX improvements over AnuraOS
+## Security & UX improvements over upstream AnuraOS
 
 - **Origin hardening:** Cloudflare-aware TLS bootstrap, automatic certificate selection (Cloudflare origin vs. native `fullchain.pem`/`privkey.pem`), and zero-tolerance direct-IP blocking with a friendly “Firewall‑chan” page keep the server reachable only through approved hostnames.
 - **Runtime safeguards:** Local DDoS guard, tight HTTP/HTTPS timeouts, privilege dropping after binding privileged ports, and optional HTTP→HTTPS forwarding make it harder to knock over the origin even when Cloudflare is disabled.

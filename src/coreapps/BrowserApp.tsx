@@ -1,6 +1,6 @@
 class BrowserApp extends App {
 	name = "Anura Browser";
-	package = "anura.browser";
+	package = "iridium.browser";
 	icon = "/assets/icons/chrome.svg";
 	source: string;
 	lib: BrowserLib;
@@ -58,7 +58,7 @@ class BrowserApp extends App {
 	}
 	async open(args: string[] = []): Promise<WMWindow | undefined> {
 		if (args.length > 0) {
-			const browser = await anura.import("anura.libbrowser");
+			const browser = await anura.import("iridium.libbrowser");
 
 			const openTab = (path: string) =>
 				new Promise((resolve) => {

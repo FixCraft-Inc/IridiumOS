@@ -1,6 +1,6 @@
 class AboutApp extends App {
-	name = "About Anura";
-	package = "anura.about";
+	name = "About Iridium";
+	package = "iridium.about";
 	icon = "/assets/icons/aboutapp.png";
 
 	page = () => (
@@ -8,7 +8,7 @@ class AboutApp extends App {
 			<div class="aboutapp-logo">
 				<div
 					class="aboutapp-logo-img"
-					title="About AnuraOS"
+					title="About IridiumOS"
 					on:click={() => {
 						alert("Why?");
 					}}
@@ -16,7 +16,7 @@ class AboutApp extends App {
 			</div>
 			<div class="aboutapp-logo-divider"></div>
 			<div class="aboutapp-content">
-				<p class="aboutapp-title">AnuraOS (FXC)</p>
+				<p class="aboutapp-title">IridiumOS (FXC)</p>
 				<p class="aboutapp-version">
 					Version {anura.version.pretty} ({anura.version.codename}) — OS build:
 					Iridium Edition™ <code>{this.getOSBuild()}</code>
@@ -26,10 +26,10 @@ class AboutApp extends App {
 				{$if(
 					anura.settings.get("x86-disabled"),
 					<p>
-						Anura x86 subsystem disabled. <br /> Enable it in{" "}
+						IridiumOS x86 subsystem disabled. <br /> Enable it in{" "}
 						<button
 							on:click={() => {
-								anura.apps["anura.settings"].open();
+								anura.apps["iridium.settings"].open();
 							}}
 							class="aboutapp-link-button"
 						>
@@ -37,15 +37,15 @@ class AboutApp extends App {
 						</button>
 						.
 					</p>,
-					<p>Anura x86 subsystem enabled.</p>,
+					<p>IridiumOS x86 subsystem enabled.</p>,
 				)}
 
 				<br />
 
 				{$if(
 					anura.settings.get("bootFromOPFS"),
-					<p>Anura is booting from OPFS.</p>,
-					<p>Anura OPFS boot disabled.</p>,
+					<p>IridiumOS is booting from OPFS.</p>,
+					<p>IridiumOS OPFS boot disabled.</p>,
 				)}
 
 				<br />
@@ -55,8 +55,8 @@ class AboutApp extends App {
 					This product is licensed under the{" "}
 					<button
 						on:click={() => {
-							anura.apps["anura.browser"].open([
-								"https://github.com/MercuryWorkshop/anuraOS/blob/main/LICENSE",
+							anura.apps["iridium.browser"].open([
+								"https://github.com/FixCraft-Inc/IridiumOS/blob/main/LICENSE",
 							]);
 						}}
 						class="aboutapp-link-button"
@@ -77,7 +77,7 @@ class AboutApp extends App {
 					<button
 						class="aboutapp-secondary-button"
 						on:click={async () => {
-							const diag = `AnuraOS ${anura.version.pretty} (${anura.version.codename}) | Iridium Edition ${this.getOSBuild()}
+							const diag = `IridiumOS ${anura.version.pretty} (${anura.version.codename}) | Iridium Edition ${this.getOSBuild()}
 	x86: ${anura.settings.get("x86-disabled") ? "disabled" : "enabled"} | OPFS: ${anura.settings.get("bootFromOPFS") ? "on" : "off"}`;
 							try {
 								await navigator.clipboard.writeText(diag);

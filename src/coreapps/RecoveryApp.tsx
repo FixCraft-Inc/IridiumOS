@@ -1,6 +1,6 @@
 class RecoveryApp extends App {
 	name = "Recovery";
-	package = "anura.recovery";
+	package = "iridium.recovery";
 	icon = "/assets/icons/verificationoff.png";
 
 	css = css`
@@ -100,7 +100,7 @@ class RecoveryApp extends App {
 					class="matter-button-contained"
 					title="Open a shell to help recover your system."
 					on:click={() => {
-						const term = anura.apps["anura.ashell"];
+						const term = anura.apps["iridium.ashell"];
 						if (term) {
 							term.open();
 						} else {
@@ -146,7 +146,7 @@ class RecoveryApp extends App {
 					class="matter-button-contained"
 					title="Open Registry Editor"
 					on:click={() => {
-						anura.apps["anura.regedit"].open();
+						anura.apps["iridium.regedit"].open();
 					}}
 				>
 					Registry Editor

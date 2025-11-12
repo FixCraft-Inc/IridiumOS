@@ -1,7 +1,7 @@
 // This lib is used to communicate with the browser app. It is registered manually in the browser app.
 class BrowserLib extends Lib {
 	name = "Anura Browser Lib";
-	package = "anura.libbrowser";
+	package = "iridium.libbrowser";
 	icon = "/assets/chrome.svg";
 
 	events: {

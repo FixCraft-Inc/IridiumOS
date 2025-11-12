@@ -1,6 +1,6 @@
 class ExploreApp extends App {
 	name = "Explore";
-	package = "anura.explore";
+	package = "iridium.explore";
 	icon = "/assets/icons/explore.png";
 	hidden = false;
 
@@ -174,19 +174,19 @@ class ExploreApp extends App {
 
 	whatsnew = (
 		<div id="body">
-			<h1>What's new in AnuraOS {anura.version.pretty}?</h1>
+			<h1>What's new in IridiumOS {anura.version.pretty}?</h1>
 			<p>
 				This version resolves a bug where certain portions of the OOBE were
-				displayed incorrectly. The release notes for AnuraOS 2.1.0 continue
+				displayed incorrectly. The release notes for IridiumOS 2.1.0 continue
 				below.
 			</p>
 			<h2>Experimental OPFS filesystem driver</h2>
 			<p>
-				AnuraOS 2.1 includes an experimental filesystem driver for the Origin
+				IridiumOS 2.1 includes an experimental filesystem driver for the Origin
 				Private File System (OPFS). This greatly improves the speed of file
 				operations. You can enable it in{" "}
 				<span>
-					<a href="javascript:anura.apps['anura.ui.settings'].open();">
+					<a href="javascript:anura.apps['iridium.ui.settings'].open();">
 						<img src="/assets/icons/settings.png" alt="Settings Icon" />
 						Settings
 					</a>
@@ -195,14 +195,14 @@ class ExploreApp extends App {
 			</p>
 			<h2>VSCode Support</h2>
 			<p>
-				AnuraOS 2.1 is the first version to include support for Visual Studio
+				IridiumOS 2.1 is the first version to include support for Visual Studio
 				Code. You can download it from the Developer Repository in{" "}
 				<span>
 					<img
 						src="/apps/marketplace.app/playstore.webp"
 						alt="Marketplace Icon"
 					/>
-					<a href="javascript:anura.apps['anura.store'].open();">Marketplace</a>
+					<a href="javascript:anura.apps['iridium.store'].open();">Marketplace</a>
 					.
 				</span>
 			</p>
@@ -243,7 +243,7 @@ class ExploreApp extends App {
 			<div class="callout">
 				<strong>Managed setting:</strong> Network/VPN controls are read-only for
 				non-admin users.{" "}
-				<a href="javascript:anura.apps['anura.settings'].open();">
+				<a href="javascript:anura.apps['iridium.settings'].open();">
 					Open Settings
 				</a>
 			</div>
@@ -254,7 +254,7 @@ class ExploreApp extends App {
 				<strong> Full (strict) SSL</strong>, DDoS mitigation, and WAF rules.
 				This prevents direct exposure of the origin server and adds an extra
 				security layer.{" "}
-				<a href="javascript:anura.apps['anura.browser'].open(['https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/full-strict/']);">
+				<a href="javascript:anura.apps['iridium.browser'].open(['https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/full-strict/']);">
 					Learn about Full (strict)
 				</a>
 				.
@@ -269,7 +269,7 @@ class ExploreApp extends App {
 			</p>
 			<p class="muted">
 				Submit a request:{" "}
-				<a href="javascript:anura.apps['anura.browser'].open(['https://fixcraft.org/rehost']);">
+				<a href="javascript:anura.apps['iridium.browser'].open(['https://fixcraft.org/rehost']);">
 					fixcraft.org/rehost
 				</a>{" "}
 				(or contact your FixCraft admin).
@@ -291,20 +291,20 @@ class ExploreApp extends App {
 		<div id="body" class="v86">
 			<h1>Using the x86 Subsystem</h1>
 			<p>
-				AnuraOS includes an x86 subsystem (based on{" "}
+				IridiumOS includes an x86 subsystem (based on{" "}
 				<a
-					href="javascript:anura.apps['anura.browser'].open(['https://github.com/copy/v86']);" // using dreamland on:click or html onclick makes the link not blue
+					href="javascript:anura.apps['iridium.browser'].open(['https://github.com/copy/v86']);" // using dreamland on:click or html onclick makes the link not blue
 				>
 					v86
 				</a>
-				), which lets you run real Linux within Anura.
+				), which lets you run real Linux within IridiumOS.
 				{anura.x86 === undefined && (
 					<p>
 						It seems like you dont have the subsystem enabled. You can install
 						it from{" "}
 						<span>
 							<img src="/assets/icons/settings.png" alt="Settings icon" />
-							<a href="javascript:anura.apps['anura.settings'].open();">
+							<a href="javascript:anura.apps['iridium.settings'].open();">
 								Settings
 							</a>
 						</span>
@@ -316,7 +316,7 @@ class ExploreApp extends App {
 						You can open a terminal using the{" "}
 						<span>
 							<img src="/assets/icons/terminal.png" alt="v86 Terminal Icon" />
-							<a href="javascript:anura.apps['anura.ashell'].open(['--cmd', '/usr/bin/x86-run.ajs']);">
+							<a href="javascript:anura.apps['iridium.ashell'].open(['--cmd', '/usr/bin/x86-run.ajs']);">
 								v86 Terminal
 							</a>
 						</span>{" "}
@@ -334,7 +334,7 @@ class ExploreApp extends App {
 				do so from{" "}
 				<span>
 					<img src="/assets/icons/settings.png" alt="Settings icon" />
-					<a href="javascript:anura.apps['anura.settings'].open();">Settings</a>
+					<a href="javascript:anura.apps['iridium.settings'].open();">Settings</a>
 				</span>
 				.
 			</p>
@@ -344,41 +344,41 @@ class ExploreApp extends App {
 	welcome = (
 		<div id="body">
 			<div class="head">
-				<img src="/icon.png" alt="AnuraOS Logo" />
-				<h1>Welcome to AnuraOS!</h1>
+				<img src="/icon.png" alt="IridiumOS Logo" />
+				<h1>Welcome to IridiumOS!</h1>
 			</div>
-			<h2>What is AnuraOS?</h2>
+			<h2>What is IridiumOS?</h2>
 			<p>
-				AnuraOS is a desktop environment made for development that runs right in
+				IridiumOS is a desktop environment made for development that runs right in
 				your browser. It features full Linux emulation and a robust app
 				ecosystem.
 			</p>
 			<h2>Getting Started</h2>
 			<p>
-				AnuraOS functions just like your average desktop: you can launch apps
+				IridiumOS functions just like your average desktop: you can launch apps
 				from the launcher (accessible via the button in the bottom-left, or
 				pressing the Meta key), drag windows around, and pin apps to the
-				taskbar. AnuraOS is visually based off of Google's ChromeOS.
+				taskbar. IridiumOS is visually based off of Google's ChromeOS.
 			</p>
 
 			<h2>Get new apps</h2>
 			<p>
-				To install more native Anura apps, you can head to the{" "}
+				To install more native IridiumOS apps, you can head to the{" "}
 				<span>
 					<img
 						src="/apps/marketplace.app/playstore.webp"
 						alt="Marketplace Icon"
 					/>
-					<a href="javascript:anura.apps['anura.store'].open();">Marketplace</a>
+					<a href="javascript:anura.apps['iridium.store'].open();">Marketplace</a>
 					.
 				</span>
 			</p>
 			<h2>Customize your experience</h2>
 			<p>
-				AnuraOS has robust customization features. You can change the wallpaper
+				IridiumOS has robust customization features. You can change the wallpaper
 				and system colors using{" "}
 				<span>
-					<a href="javascript:anura.apps['anura.wallpaper'].open();">
+					<a href="javascript:anura.apps['iridium.wallpaper'].open();">
 						<img
 							src="/assets/icons/wallpaper.png"
 							alt="Wallpaper Selector Icon"
@@ -389,7 +389,7 @@ class ExploreApp extends App {
 				.
 			</p>
 			<p>
-				For advanced users, Anura will execute any files in the /usr/init folder
+				For advanced users, IridiumOS will execute any files in the /usr/init folder
 				as JavaScript code on boot.
 			</p>
 		</div>
@@ -448,7 +448,7 @@ class ExploreApp extends App {
 
 	async open(args: string[] = []): Promise<WMWindow | undefined> {
 		const win = anura.wm.create(this, {
-			title: "Explore AnuraOS",
+			title: "Explore IridiumOS",
 			width: `calc(${window.innerHeight * 0.6}px * 16 / 10)`, // manually calculating to prevent wonky behaviour on window resize
 			height: `${window.innerHeight * 0.6}px`,
 		});

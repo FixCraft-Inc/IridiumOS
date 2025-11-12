@@ -1,7 +1,7 @@
 {
 	"name": "Anura Shell",
 	"type": "auto",
-	"package": "anura.ashell",
+	"package": "iridium.ashell",
 	"index": "term.html",
 	"icon": "term.png",
 	"wininfo": {

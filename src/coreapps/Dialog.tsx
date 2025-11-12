@@ -7,7 +7,7 @@ type ProgressObject = {
 
 class Dialog extends App {
 	name = "Anura Dialog";
-	package = "anura.dialog";
+	package = "iridium.dialog";
 	icon = "/assets/icons/generic.svg";
 	source: string;
 	hidden = true;

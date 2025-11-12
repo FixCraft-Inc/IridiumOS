@@ -344,7 +344,7 @@ class V86Backend {
 			async (data) => {
 				console.debug("XFROG " + data);
 				if (data.includes("XFROG-INIT")) {
-					anura.apps["anura.xfrog"].startup();
+					anura.apps["iridium.xfrog"].startup();
 					this.startMouseDriver();
 					anura.notifications.add({
 						title: "x86 Subsystem",

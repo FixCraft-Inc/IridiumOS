@@ -37,7 +37,7 @@ class ShortcutApp extends App implements AnuraShortcut {
 		);
 
 		if (props.console) {
-			const terminal = anura.settings.get("terminal") || "anura.ashell";
+			const terminal = anura.settings.get("terminal") || "iridium.ashell";
 			anura.settings.set("terminal", terminal);
 
 			const proc = await anura.apps[terminal].open([
@@ -58,7 +58,7 @@ class ShortcutApp extends App implements AnuraShortcut {
 	}
 
 	name = "Shortcut";
-	package = "anura.shortcut";
+	package = "iridium.shortcut";
 	icon = "/assets/icons/generic.svg";
 	console = false;
 	command =
@@ -67,7 +67,7 @@ class ShortcutApp extends App implements AnuraShortcut {
 	constructor(filePath: string, props: AnuraShortcut) {
 		super();
 		Object.assign(this, props);
-		this.package = "anura.shortcut." + b26(filePath);
+		this.package = "iridium.shortcut." + b26(filePath);
 		if (anura.apps[this.package]) {
 			if (anura.apps[this.package] instanceof ShortcutApp) {
 				// If the app is already a shortcut app, just return it

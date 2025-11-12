@@ -69,7 +69,7 @@ namespace AnuradHelpers {
 
 class AnuradHelpersLib extends Lib {
 	icon = "/assets/icons/generic.svg";
-	package = "anura.daemon.helpers";
+	package = "iridium.daemon.helpers";
 	name = "Anurad Helpers";
 
 	versions: { [key: string]: any } = {

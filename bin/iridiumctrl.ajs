@@ -1,6 +1,6 @@
 #! {"lang":"module"}
 console.warn(`
-// AnuraCtrl - A command-line utility for controlling Anura apps
+// IridiumCtrl - A command-line utility for controlling Iridium apps
 // Eventually this should have more tightly knit integration with Anurad, 
 // instead of just the raw process API. For now, this is a good start.`)
 

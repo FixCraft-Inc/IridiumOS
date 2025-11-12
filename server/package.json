@@ -1,16 +1,16 @@
 {
-	"name": "anuraos-server",
+	"name": "iridiumos-server",
 	"type": "module",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/MercuryWorkshop/AnuraOS.git"
+		"url": "git+https://github.com/FixCraft-Inc/IridiumOS.git"
 	},
-	"author": "Mercury Workshop",
+	"author": "F1xGOD",
 	"license": "AGPL-3.0-only",
 	"bugs": {
-		"url": "https://github.com/MercuryWorkshop/AnuraOS/issues"
+		"url": "https://github.com/FixCraft-Inc/IridiumOS/issues"
 	},
-	"homepage": "https://github.com/MercuryWorkshop/AnuraOS#readme",
+	"homepage": "https://github.com/FixCraft-Inc/IridiumOS#readme",
 	"dependencies": {
 		"express": "^4.21.2",
 		"dotenv": "^16.4.5",
