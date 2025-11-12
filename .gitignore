@@ -42,3 +42,4 @@ x86_image_wizard/alpine/epoxy-server
 IGNORE/
 *.csv
 *.py
+DEV/
