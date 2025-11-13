@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 export PATH
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,6 +11,177 @@ cd "$SCRIPT_DIR"
 log()  { printf "\033[1;34m[+] %s\033[0m\n" "$*"; }
 warn() { printf "\033[1;33m[!] %s\033[0m\n" "$*"; }
 err()  { printf "\033[1;31m[✘] %s\033[0m\n" "$*"; }
+
+# ========= macOS helpers =========
+mac_brew_has_formula() { brew list --versions "$1" >/dev/null 2>&1; }
+mac_brew_has_cask()    { brew list --cask --versions "$1" >/dev/null 2>&1; }
+mac_brew_install_formula() {
+  local pkg="$1"
+  if mac_brew_has_formula "$pkg"; then
+    log "brew: $pkg already present"
+    return 0
+  fi
+  log "brew install $pkg"
+  if brew install "$pkg"; then
+    return 0
+  fi
+  return 1
+}
+mac_brew_install_cask() {
+  local pkg="$1"
+  if mac_brew_has_cask "$pkg"; then
+    log "brew cask: $pkg already present"
+    return 0
+  fi
+  log "brew install --cask $pkg"
+  if brew install --cask "$pkg"; then
+    return 0
+  fi
+  return 1
+}
+mac_node_major() {
+  if command -v node >/dev/null 2>&1; then
+    node -v | sed 's/^v//;s/\..*$//'
+  else
+    echo 0
+  fi
+}
+mac_java_major() {
+  if ! command -v java >/dev/null 2>&1; then
+    echo 0
+    return
+  fi
+  local raw version major
+  raw="$(java -version 2>&1 | head -n1)"
+  version="$(sed -nE 's/.*version "([^"]+)".*/\1/p' <<<"$raw")"
+  if [[ "$version" =~ ^1\.([0-9]+)\. ]]; then
+    major="${BASH_REMATCH[1]}"
+  elif [[ "$version" =~ ^([0-9]+) ]]; then
+    major="${BASH_REMATCH[1]}"
+  else
+    major=0
+  fi
+  echo "$major"
+}
+mac_source_cargo_env() {
+  if [ -f "$HOME/.cargo/env" ]; then
+    # shellcheck disable=SC1090
+    . "$HOME/.cargo/env"
+  fi
+  export PATH="$HOME/.cargo/bin:$PATH"
+}
+run_macos_tryinstall() {
+  local mac_ver
+  mac_ver="$(sw_vers -productVersion 2>/dev/null || uname -r)"
+  log "Detected platform: macOS ${mac_ver}"
+  if [ "$(id -u)" -eq 0 ]; then
+    err "Please re-run without sudo on macOS (Homebrew does not support running as root)."
+    exit 1
+  fi
+  if ! xcode-select -p >/dev/null 2>&1; then
+    warn "Command Line Tools for Xcode not detected. Run 'xcode-select --install' if builds fail."
+  fi
+  if ! command -v brew >/dev/null 2>&1; then
+    err "Homebrew not found. Install it from https://brew.sh and re-run this script."
+    exit 1
+  fi
+
+  log "Using Homebrew: $(command -v brew)"
+  if ! brew update; then
+    warn "brew update failed; proceeding with existing metadata."
+  fi
+
+  local FORMULA_PKGS=(watchman jq gnupg binaryen)
+  local pkg
+  for pkg in "${FORMULA_PKGS[@]}"; do
+    mac_brew_install_formula "$pkg"
+  done
+
+  # Node.js >=20 (prefer 22)
+  local node_major
+  node_major="$(mac_node_major)"
+  if [ "${node_major:-0}" -lt 20 ]; then
+    log "Installing Node.js 22 via Homebrew"
+    if ! mac_brew_install_formula node@22; then
+      warn "node@22 formula unavailable; falling back to 'node'"
+      mac_brew_install_formula node
+    fi
+    if mac_brew_has_formula node@22; then
+      brew link --overwrite --force node@22 >/dev/null 2>&1 || true
+    fi
+  else
+    log "Node OK: $(node -v)"
+  fi
+
+  # Java >= 11 (prefer 21)
+  local java_major
+  java_major="$(mac_java_major)"
+  if [ "${java_major:-0}" -lt 11 ]; then
+    log "Installing Temurin JDK (21) via Homebrew cask"
+    mac_brew_install_cask temurin
+  else
+    log "Java OK: $(java -version 2>&1 | head -n1)"
+    if [ "${java_major:-0}" -lt 21 ]; then
+      warn "Java ${java_major} detected. Installing Temurin 21 for best compatibility."
+      mac_brew_install_cask temurin
+    fi
+  fi
+
+  # Rust toolchain
+  if ! command -v rustup >/dev/null 2>&1; then
+    mac_brew_install_formula rustup-init
+    rustup-init -y --profile minimal --default-toolchain stable
+  fi
+  mac_source_cargo_env
+  if command -v rustup >/dev/null 2>&1; then
+    if ! rustup target list --installed | grep -qx 'wasm32-unknown-unknown'; then
+      rustup target add wasm32-unknown-unknown
+    fi
+    if ! rustup target list --installed | grep -qx 'i686-unknown-linux-gnu'; then
+      if ! rustup target add i686-unknown-linux-gnu; then
+        warn "Failed to install Rust target i686-unknown-linux-gnu (continuing)."
+      fi
+    fi
+  else
+    warn "rustup not detected after installation attempt; check your Homebrew setup."
+  fi
+
+  if ! command -v wasm-opt >/dev/null 2>&1; then
+    warn "wasm-opt still missing; ensure Homebrew 'binaryen' is in PATH."
+  fi
+
+  if ! command -v docker >/dev/null 2>&1; then
+    warn "Docker CLI not detected. Install Docker Desktop (brew install --cask docker) if you plan to run 'make full'."
+  else
+    log "Docker CLI: $(docker --version 2>/dev/null || echo 'available')"
+  fi
+
+  echo
+  log "Summary (macOS):"
+  command -v clang    >/dev/null 2>&1 && echo "  ✔ clang            $(clang --version 2>/dev/null | head -n1)" || echo "  ✘ clang"
+  command -v java     >/dev/null 2>&1 && echo "  ✔ java             $(java -version 2>&1 | head -n1)" || echo "  ✘ java"
+  command -v node     >/dev/null 2>&1 && echo "  ✔ node             $(node -v 2>/dev/null)" || echo "  ✘ node"
+  command -v npm      >/dev/null 2>&1 && echo "  ✔ npm              $(npm -v 2>/dev/null)" || echo "  ✘ npm"
+  command -v rustup   >/dev/null 2>&1 && echo "  ✔ rustup           $(rustup --version 2>/dev/null | head -n1 || true)" || echo "  ✘ rustup"
+  command -v cargo    >/dev/null 2>&1 && echo "  ✔ cargo            $(cargo --version 2>/dev/null | head -n1 || true)" || echo "  ✘ cargo"
+  command -v wasm-opt >/dev/null 2>&1 && echo "  ✔ wasm-opt         $(wasm-opt --version 2>/dev/null | head -n1 || true)" || echo "  ✘ wasm-opt"
+  command -v watchman >/dev/null 2>&1 && echo "  ✔ watchman         $(watchman --version 2>/dev/null | head -n1 || true)" || echo "  ✘ watchman"
+  command -v docker   >/dev/null 2>&1 && echo "  ✔ docker           $(docker --version 2>/dev/null || true)" || echo "  ⚠ docker           install Docker Desktop for containerized builds"
+
+  if [ -x "$SCRIPT_DIR/HEALTH.sh" ]; then
+    echo
+    log "Verifying prerequisites with HEALTH.sh (--no-compile)"
+    PATH="$HOME/.cargo/bin:$PATH" "$SCRIPT_DIR/HEALTH.sh" --no-compile
+  fi
+
+  echo
+  log "macOS setup complete. You can now run 'npm install' or 'make dev'."
+}
+
+if [ "$(uname -s)" = "Darwin" ]; then
+  run_macos_tryinstall
+  exit 0
+fi
 
 # ========= OS-release early load =========
 if [ -f /etc/os-release ]; then . /etc/os-release; fi

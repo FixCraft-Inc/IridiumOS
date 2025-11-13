@@ -2,7 +2,7 @@
 # IridiumOS build prerequisites health check
 set -euo pipefail
 
-PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 export PATH
 
 if [ -f /etc/os-release ]; then . /etc/os-release; fi
@@ -35,6 +35,8 @@ ESSENTIAL_CMDS=(make git gcc clang node npm rustup cargo java jq uuidgen wasm-op
 OPTIONAL_CMDS=(iptables sysctl wg-quick)
 ALT_CMDS=(wget curl)
 RUST_TARGETS=(wasm32-unknown-unknown i686-unknown-linux-gnu)
+MAC_ESSENTIAL_CMDS=(make git clang node npm rustup cargo java jq uuidgen wasm-opt watchman)
+MAC_RUST_TARGETS=(wasm32-unknown-unknown i686-unknown-linux-gnu)
 # ----------------------------------------------------------------------
 
 RED=$(printf '\033[31m'); GREEN=$(printf '\033[32m'); YEL=$(printf '\033[33m'); BLU=$(printf '\033[34m'); GRY=$(printf '\033[90m'); RST=$(printf '\033[0m')
@@ -96,11 +98,47 @@ print_line() {
     printf "%s\n" "$1"
   fi
 }
+section() {
+  CURRENT_SECTION="$*"
+  if [ "$HUMAN_MODE" -eq 0 ]; then
+    echo
+    echo "${BLU}== $* ==${RST}"
+  fi
+}
 join_by() { local IFS="$1"; shift; echo "$*"; }
 missing_suffix() {
   if [ "$#" -gt 0 ]; then
     printf " (missing: %s)" "$(join_by ', ' "$@")"
   fi
+}
+mac_arch_ok() {
+  case "$(uname -m)" in
+    x86_64|arm64) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+mac_mem_total_mb() {
+  local bytes
+  bytes="$(sysctl -n hw.memsize 2>/dev/null || echo 0)"
+  awk -v b="$bytes" 'BEGIN { printf "%.0f\n", b/1048576 }'
+}
+mac_disk_free_mb() { df -Pm . | awk 'NR==2{print $4}'; }
+get_node_major() {
+  local v; v="$(node -v 2>/dev/null || true)"
+  v="${v#v}"; echo "${v%%.*}"
+}
+get_java_major() {
+  local raw version major
+  raw="$(java -version 2>&1 | head -n1)" || true
+  version="$(sed -nE 's/.*version "([^"]+)".*/\1/p' <<<"$raw")"
+  if [[ "$version" =~ ^1\.([0-9]+)\. ]]; then
+    major="${BASH_REMATCH[1]}"
+  elif [[ "$version" =~ ^([0-9]+) ]]; then
+    major="${BASH_REMATCH[1]}"
+  else
+    major=0
+  fi
+  echo "$major"
 }
 detect_kernel_caps() {
   KERNEL_USERNS="$(sysctl -n kernel.unprivileged_userns_clone 2>/dev/null || echo 0)"
@@ -143,35 +181,6 @@ is_limited_kernel() {
   return 1
 }
 
-if is_limited_kernel; then
-  MODE="LIMITED"
-  MODE_REASON="restricted container capabilities"
-else
-  MODE="FULL"
-fi
-detect_kernel_caps
-if [ "$KERNEL_LIMITED" -eq 1 ]; then
-  MODE="LIMITED"
-  [ -z "$MODE_REASON" ] && MODE_REASON="missing cgroups/overlay/user namespaces"
-fi
-
-get_node_major() {
-  local v; v="$(node -v 2>/dev/null || true)"   # v22.x
-  v="${v#v}"; echo "${v%%.*}"
-}
-get_java_major() {
-  local raw version major
-  raw="$(java -version 2>&1 | head -n1)" || true
-  version="$(sed -nE 's/.*version "([^"]+)".*/\1/p' <<<"$raw")"
-  if [[ "$version" =~ ^1\.([0-9]+)\. ]]; then
-    major="${BASH_REMATCH[1]}"
-  elif [[ "$version" =~ ^([0-9]+) ]]; then
-    major="${BASH_REMATCH[1]}"
-  else
-    major=0
-  fi
-  echo "$major"
-}
 mem_total_mb() { awk '/MemTotal:/ {printf "%.0f", $2/1024}' /proc/meminfo; }
 disk_free_mb_here() { df -Pm . | awk 'NR==2{print $4}'; }
 is_linux() { [ "$(uname -s)" = "Linux" ]; }
@@ -202,6 +211,346 @@ docker_group_note() {
     echo "no"
   fi
 }
+
+run_macos_health() {
+  MODE="MACOS"
+  local os_pretty arch overall_rc=0
+  local -a MISSING=()
+  local -a FIXHINTS=()
+  local -a CORE_MISSING=()
+  local -a RUST_MISSING=()
+  local CORE_TOTAL=${#MAC_ESSENTIAL_CMDS[@]}
+  local CORE_OK=0
+  local ALT_OK="no"
+  local RUST_TOTAL=$((1 + ${#MAC_RUST_TARGETS[@]}))
+  local RUST_OK=0
+  local RUST_CHANNEL="unknown"
+  local GLIBC_TOTAL=0
+  local GLIBC_STATE="skipped"
+  local GLIBC_OK=0
+  local DOCKER_TOTAL=1
+  local DOCKER_OK=0
+  local DOCKER_NOTE=""
+  local DOCKER_MISSING=()
+  local RAM_VALUE_MB=0
+  local RAM_STATUS=0
+  local DISK_VALUE_MB=0
+  local DISK_STATUS=0
+  local NET_STATUS="no"
+  local REPORT_OS="yes"
+  local REPORT_ARCH="yes"
+  local REPORT_NODE="no"
+  local REPORT_JAVA="no"
+  local REPORT_RUST_CH="unknown"
+  local REPORT_RUST_WASM="no"
+  local REPORT_RUST_I686="no"
+  local REPORT_GLIBC32="skipped"
+  local REPORT_DOCKER_CMD="no"
+  local REPORT_NET="no"
+  local REPORT_RAM="no"
+  local REPORT_DISK="no"
+  local REPORT_DOWNLOADER="no"
+
+  os_pretty="$(sw_vers -productName 2>/dev/null || echo "macOS") $(sw_vers -productVersion 2>/dev/null || uname -r)"
+  arch="$(uname -m)"
+
+  section "Platform"
+  print_line "$(kv 'OS' "${PASS} ${os_pretty}")"
+  if mac_arch_ok; then
+    print_line "$(kv 'CPU Arch' "${PASS} ${arch}")"
+  else
+    print_line "$(kv 'CPU Arch' "${WARN} ${arch} (tested on arm64/x86_64)")"
+    REPORT_ARCH="no"
+  fi
+  if command -v brew >/dev/null 2>&1; then
+    print_line "$(kv 'Pkg manager' "${PASS} Homebrew")"
+  else
+    print_line "$(kv 'Pkg manager' "${WARN} Homebrew missing (install from brew.sh)")"
+    FIXHINTS+=("Install Homebrew from https://brew.sh to manage dependencies")
+    MISSING+=("homebrew")
+    overall_rc=1
+  fi
+
+  section "Core Tools"
+  local cmd
+  for cmd in "${MAC_ESSENTIAL_CMDS[@]}"; do
+    if have "$cmd"; then
+      print_line "$(kv "$cmd" "${PASS} found")"
+      CORE_OK=$((CORE_OK+1))
+    else
+      print_line "$(kv "$cmd" "${FAIL} missing")"
+      CORE_MISSING+=("$cmd")
+      MISSING+=("$cmd")
+      overall_rc=1
+      case "$cmd" in
+        watchman) FIXHINTS+=("brew install watchman");;
+        wasm-opt) FIXHINTS+=("brew install binaryen # provides wasm-opt");;
+        jq) FIXHINTS+=("brew install jq");;
+        rustup|cargo|rustc) FIXHINTS+=("brew install rustup-init && rustup-init -y --profile minimal");;
+        java) FIXHINTS+=("brew install --cask temurin");;
+        node|npm) FIXHINTS+=("brew install node@22 || brew install node");;
+        clang|gcc|make) FIXHINTS+=("Install Xcode Command Line Tools via 'xcode-select --install'");;
+      esac
+    fi
+  done
+  local alt
+  for alt in "${ALT_CMDS[@]}"; do
+    if have "$alt"; then
+      ALT_OK="yes"
+      break
+    fi
+  done
+  CORE_TOTAL=$((CORE_TOTAL+1))
+  if [ "$ALT_OK" = "yes" ]; then
+    REPORT_DOWNLOADER="yes"
+    CORE_OK=$((CORE_OK+1))
+    print_line "$(kv 'wget OR curl' "${PASS} ok")"
+  else
+    REPORT_DOWNLOADER="no"
+    print_line "$(kv 'wget OR curl' "${FAIL} neither present")"
+    CORE_MISSING+=("wget/curl")
+    MISSING+=("wget/curl")
+    overall_rc=1
+  fi
+
+  # Node version
+  if have node; then
+    local nmaj
+    nmaj="$(get_node_major || echo 0)"
+    if [ "$nmaj" -ge "$REQ_NODE_MAJOR_MIN" ]; then
+      REPORT_NODE="yes"
+      print_line "$(kv "Node >=$REQ_NODE_MAJOR_MIN" "${PASS} $(node -v)")"
+    else
+      print_line "$(kv "Node >=$REQ_NODE_MAJOR_MIN" "${FAIL} $(node -v)")"
+      FIXHINTS+=("brew install node@22 && brew link --overwrite node@22")
+      overall_rc=1
+    fi
+  else
+    print_line "$(kv "Node >=$REQ_NODE_MAJOR_MIN" "${FAIL} not installed")"
+    FIXHINTS+=("brew install node@22 || brew install node")
+    overall_rc=1
+  fi
+
+  # Java version
+  if have java; then
+    local jmaj
+    jmaj="$(get_java_major || echo 0)"
+    if [ "$jmaj" -ge "$REQ_JAVA_MIN" ]; then
+      REPORT_JAVA="yes"
+      print_line "$(kv "Java >=$REQ_JAVA_MIN" "${PASS} $(java -version 2>&1 | head -n1)")"
+    else
+      print_line "$(kv "Java >=$REQ_JAVA_MIN" "${FAIL} $(java -version 2>&1 | head -n1)")"
+      FIXHINTS+=("brew install --cask temurin")
+      overall_rc=1
+    fi
+  else
+    print_line "$(kv "Java >=$REQ_JAVA_MIN" "${FAIL} not installed")"
+    FIXHINTS+=("brew install --cask temurin")
+    overall_rc=1
+  fi
+
+  section "Rust toolchain"
+  if have rustup && have cargo && have rustc; then
+    local act_toolchain
+    act_toolchain="$(rustup show active-toolchain 2>/dev/null | awk '{print $1}' || true)"
+    RUST_CHANNEL="${act_toolchain:-unknown}"
+    REPORT_RUST_CH="${act_toolchain:-unknown}"
+    RUST_OK=$((RUST_OK+1))
+    if [[ "${act_toolchain:-}" == nightly* ]]; then
+      print_line "$(kv 'Rust channel' "${PASS} $act_toolchain")"
+    else
+      print_line "$(kv 'Rust channel' "${WARN} ${act_toolchain:-unknown} (repo pins nightly)")"
+    fi
+    local tgt
+    for tgt in "${MAC_RUST_TARGETS[@]}"; do
+      if rustup target list --installed | grep -q "^${tgt}$"; then
+        print_line "$(kv "Rust target: $tgt" "${PASS} installed")"
+        [ "$tgt" = "wasm32-unknown-unknown" ] && REPORT_RUST_WASM="yes"
+        [ "$tgt" = "i686-unknown-linux-gnu" ] && REPORT_RUST_I686="yes"
+        RUST_OK=$((RUST_OK+1))
+      else
+        print_line "$(kv "Rust target: $tgt" "${FAIL} missing")"
+        RUST_MISSING+=("$tgt")
+        FIXHINTS+=("rustup target add $tgt")
+        overall_rc=1
+      fi
+    done
+  else
+    print_line "$(kv 'Rust toolchain' "${FAIL} rustup/cargo/rustc missing")"
+    RUST_MISSING+=("rustup/cargo/rustc")
+    overall_rc=1
+    local tgt
+    for tgt in "${MAC_RUST_TARGETS[@]}"; do
+      RUST_MISSING+=("$tgt")
+    done
+  fi
+
+  section "Docker (Desktop)"
+  if have docker; then
+    REPORT_DOCKER_CMD="yes"
+    DOCKER_OK=$((DOCKER_OK+1))
+    print_line "$(kv 'docker' "${PASS} $(docker --version 2>/dev/null || echo available)")"
+    if [ "$DEEP" -eq 1 ]; then
+      if docker info >/dev/null 2>&1; then
+        print_line "$(kv 'docker info' "${PASS} reachable")"
+      else
+        print_line "$(kv 'docker info' "${WARN} failed (ensure Docker Desktop is running)")"
+        DOCKER_NOTE="daemon unreachable"
+      fi
+    fi
+  else
+    print_line "$(kv 'docker' "${WARN} not installed (install Docker Desktop for 'make full')")"
+    DOCKER_NOTE="not installed"
+    DOCKER_MISSING+=("docker")
+  fi
+
+  section "System resources"
+  local ram_mb disk_mb
+  ram_mb="$(mac_mem_total_mb)"
+  disk_mb="$(mac_disk_free_mb)"
+  RAM_VALUE_MB="$ram_mb"
+  DISK_VALUE_MB="$disk_mb"
+  if [ "${ram_mb:-0}" -ge "$REQ_RAM_MB_MIN" ]; then
+    REPORT_RAM="yes"
+    RAM_STATUS=1
+    print_line "$(kv 'RAM' "${PASS} ${ram_mb}MB (>= ${REQ_RAM_MB_MIN}MB)")"
+  else
+    REPORT_RAM="no"
+    RAM_STATUS=0
+    print_line "$(kv 'RAM' "${FAIL} ${ram_mb}MB (< ${REQ_RAM_MB_MIN}MB)")"
+    overall_rc=1
+  fi
+  if [ "${disk_mb:-0}" -ge "$REQ_DISK_MB_MIN" ]; then
+    REPORT_DISK="yes"
+    DISK_STATUS=1
+    print_line "$(kv 'Disk free (.)' "${PASS} ${disk_mb}MB (>= ${REQ_DISK_MB_MIN}MB)")"
+  else
+    REPORT_DISK="no"
+    DISK_STATUS=0
+    print_line "$(kv 'Disk free (.)' "${FAIL} ${disk_mb}MB (< ${REQ_DISK_MB_MIN}MB)")"
+    overall_rc=1
+  fi
+
+  section "Networking sanity (light)"
+  if (have curl && curl -fsSL https://github.com >/dev/null) || (have wget && wget -qO- https://github.com >/dev/null); then
+    REPORT_NET="yes"
+    NET_STATUS="yes"
+    print_line "$(kv 'Internet reachability' "${PASS} ok")"
+  else
+    REPORT_NET="no"
+    NET_STATUS="no"
+    print_line "$(kv 'Internet reachability' "${WARN} failed (check DNS/proxy)")"
+  fi
+
+  if [ "$HUMAN_MODE" -eq 0 ]; then
+    section "Summary"
+    echo "${BLU}Mode: ${MODE}${RST}"
+    if ((${#MISSING[@]})); then
+      echo "${FAIL} Missing essential commands: ${MISSING[*]}"
+    fi
+    if ((${#FIXHINTS[@]})); then
+      echo "${YEL}Hints:${RST}"
+      local hint
+      for hint in "${FIXHINTS[@]}"; do
+        echo "  - $hint"
+      done
+    fi
+    if [ "$overall_rc" -eq 0 ]; then
+      echo "${PASS} All essential checks passed. Ready to build."
+    else
+      echo "${FAIL} Some essential checks failed. See above."
+    fi
+  else
+    echo
+    echo "${ICON_GOOD} Platform: macOS / ${arch}"
+    local core_icon
+    core_icon=$([ "$CORE_OK" -eq "$CORE_TOTAL" ] && echo "$ICON_GOOD" || echo "$ICON_WARN")
+    echo "$core_icon Core Tools: ${CORE_OK}/${CORE_TOTAL}$(missing_suffix "${CORE_MISSING[@]}")"
+    local rust_icon
+    rust_icon=$([ "$RUST_OK" -eq "$RUST_TOTAL" ] && echo "$ICON_GOOD" || echo "$ICON_WARN")
+    local rust_line="$rust_icon Rust Toolchain: ${RUST_OK}/${RUST_TOTAL}"
+    if [ -n "$RUST_CHANNEL" ]; then
+      rust_line+=" (channel: ${RUST_CHANNEL})"
+    fi
+    if [ "${#RUST_MISSING[@]}" -gt 0 ]; then
+      rust_line+="$(missing_suffix "${RUST_MISSING[@]}")"
+    fi
+    echo "$rust_line"
+    echo "${ICON_INFO} 32-bit Toolchain: skipped (not required on macOS)"
+    local docker_icon
+    docker_icon=$([ "$DOCKER_OK" -eq "$DOCKER_TOTAL" ] && echo "$ICON_GOOD" || echo "$ICON_WARN")
+    local docker_line="$docker_icon Docker: ${DOCKER_OK}/${DOCKER_TOTAL}"
+    if [ -n "$DOCKER_NOTE" ]; then
+      docker_line+=" [${DOCKER_NOTE}]"
+    fi
+    echo "$docker_line"
+    local ram_icon
+    ram_icon=$([ "$RAM_STATUS" -eq 1 ] && echo "$ICON_GOOD" || echo "$ICON_BAD")
+    echo "$ram_icon RAM: $(humanize_mb "$RAM_VALUE_MB") (>= $(humanize_mb "$REQ_RAM_MB_MIN"))"
+    local disk_icon
+    disk_icon=$([ "$DISK_STATUS" -eq 1 ] && echo "$ICON_GOOD" || echo "$ICON_BAD")
+    echo "$disk_icon Disk: $(humanize_mb "$DISK_VALUE_MB") (>= $(humanize_mb "$REQ_DISK_MB_MIN"))"
+    local net_icon
+    net_icon=$([ "$NET_STATUS" = "yes" ] && echo "$ICON_GOOD" || echo "$ICON_WARN")
+    if [ "$NET_STATUS" = "yes" ]; then
+      echo "$net_icon Networking: ok"
+    else
+      echo "$net_icon Networking: issues (check DNS/proxy)"
+    fi
+    if [ "$overall_rc" -eq 0 ]; then
+      echo "${ICON_GOOD} Ready: All essential checks passed."
+    else
+      echo "${ICON_BAD} Ready: Some essential checks failed."
+    fi
+  fi
+
+  if [ "$JSON_OUT" -eq 1 ]; then
+    jq -n \
+      --arg os        "$REPORT_OS" \
+      --arg arch      "$REPORT_ARCH" \
+      --arg node_ok   "$REPORT_NODE" \
+      --arg java_ok   "$REPORT_JAVA" \
+      --arg channel   "$REPORT_RUST_CH" \
+      --arg wasm      "$REPORT_RUST_WASM" \
+      --arg i686      "$REPORT_RUST_I686" \
+      --arg glibc32   "$REPORT_GLIBC32" \
+      --arg dockerCmd "$REPORT_DOCKER_CMD" \
+      --arg net       "$REPORT_NET" \
+      --arg ram_ok    "$REPORT_RAM" \
+      --arg disk_ok   "$REPORT_DISK" \
+      --arg dl_ok     "$REPORT_DOWNLOADER" \
+      --arg exit_code "$overall_rc" \
+      '{
+        os:$os, arch:$arch,
+        node_ver_ok:$node_ok, java_ver_ok:$java_ok,
+        rust:{channel:$channel, targets:{ "wasm32-unknown-unknown":$wasm, "i686-unknown-linux-gnu":$i686 }},
+        glibc32:$glibc32,
+        docker_cmd:$dockerCmd,
+        net_ok:$net,
+        resources:{ram_ok:$ram_ok, disk_ok:$disk_ok},
+        downloader_ok:$dl_ok,
+        exit_code: ($exit_code|tonumber)
+      }'
+  fi
+
+  exit "$overall_rc"
+}
+
+if [ "$(uname -s)" = "Darwin" ]; then
+  run_macos_health
+fi
+
+if is_limited_kernel; then
+  MODE="LIMITED"
+  MODE_REASON="restricted container capabilities"
+else
+  MODE="FULL"
+fi
+detect_kernel_caps
+if [ "$KERNEL_LIMITED" -eq 1 ]; then
+  MODE="LIMITED"
+  [ -z "$MODE_REASON" ] && MODE_REASON="missing cgroups/overlay/user namespaces"
+fi
 
 # ----------------------------- CHECKS ---------------------------------
 declare -A REPORT
@@ -237,13 +586,6 @@ NET_STATUS="no"
 
 overall_rc=0
 add_fail() { overall_rc=1; }
-section() {
-  CURRENT_SECTION="$*"
-  if [ "$HUMAN_MODE" -eq 0 ]; then
-    echo
-    echo "${BLU}== $* ==${RST}"
-  fi
-}
 
 section "Platform"
 os_ok="no"; arch_good="no"
