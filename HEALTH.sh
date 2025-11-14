@@ -31,11 +31,11 @@ REQ_NODE_MAJOR_MIN=20
 REQ_JAVA_MIN=11
 REQ_RAM_MB_MIN=3072
 REQ_DISK_MB_MIN=5120
-ESSENTIAL_CMDS=(make git gcc clang node npm rustup cargo java jq uuidgen wasm-opt inotifywait ip setpriv)
+ESSENTIAL_CMDS=(make git gcc clang node npm pnpm rustup cargo java jq uuidgen wasm-opt inotifywait ip setpriv)
 OPTIONAL_CMDS=(iptables sysctl wg-quick)
 ALT_CMDS=(wget curl)
 RUST_TARGETS=(wasm32-unknown-unknown i686-unknown-linux-gnu)
-MAC_ESSENTIAL_CMDS=(make git clang node npm rustup cargo java jq uuidgen wasm-opt watchman)
+MAC_ESSENTIAL_CMDS=(make git clang node npm pnpm rustup cargo java jq uuidgen wasm-opt watchman)
 MAC_RUST_TARGETS=(wasm32-unknown-unknown i686-unknown-linux-gnu)
 # ----------------------------------------------------------------------
 
@@ -611,6 +611,9 @@ for c in "${ESSENTIAL_CMDS[@]}"; do
 				;;
 			setpriv)
 				FIXHINTS+=("Install util-linux (setpriv). Debian/Ubuntu: sudo apt install util-linux; Fedora: sudo dnf install util-linux")
+				;;
+			pnpm)
+				FIXHINTS+=("Install pnpm via the official installer: curl -fsSL https://get.pnpm.io/install.sh | sh - (make sure \$PNPM_HOME is on PATH).")
 				;;
 		esac
 	fi

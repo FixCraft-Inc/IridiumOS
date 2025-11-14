@@ -33,6 +33,7 @@ read -r -d '' DEFAULT_CONFIG <<'JSON'
 		"followServer": true,
 		"https": 443,
 		"http": 80,
+		"twebHttps": 443,
 		"exposeHttpRedirect": true
 	},
 		"vpn": {
@@ -203,6 +204,7 @@ run_with_root() {
 RESOLVED_HTTPS_PORT=443
 RESOLVED_HTTP_PORT=80
 RESOLVED_HTTP_ALLOWED="false"
+RESOLVED_TWEB_HTTPS_PORT=443
 
 resolve_runtime_ports() {
 	local follow expose runtime_json
@@ -211,6 +213,7 @@ resolve_runtime_ports() {
 
 	RESOLVED_HTTPS_PORT="$(jq '.ports.https' "$CONFIG_FILE")"
 	RESOLVED_HTTP_PORT="$(jq '.ports.http' "$CONFIG_FILE")"
+	RESOLVED_TWEB_HTTPS_PORT="$(jq '.ports.twebHttps' "$CONFIG_FILE")"
 	RESOLVED_HTTP_ALLOWED="$expose"
 
 	if [[ "$follow" == "true" && -f "$RUNTIME_PORT_SCRIPT" ]]; then
@@ -219,15 +222,19 @@ resolve_runtime_ports() {
 			return
 		fi
 		if runtime_json="$(node "$RUNTIME_PORT_SCRIPT" 2>/dev/null)"; then
-			local runtime_https runtime_http runtime_redirect
+			local runtime_https runtime_http runtime_redirect runtime_tweb
 			runtime_https="$(printf '%s' "$runtime_json" | jq '.httpsPort')"
 			runtime_http="$(printf '%s' "$runtime_json" | jq '.httpPort')"
+			runtime_tweb="$(printf '%s' "$runtime_json" | jq '.twebHttpsPort')"
 			runtime_redirect="$(printf '%s' "$runtime_json" | jq -r '.enableHttpRedirect')"
 			if [[ "$runtime_https" != "null" ]]; then
 				RESOLVED_HTTPS_PORT="$runtime_https"
 			fi
 			if [[ "$runtime_http" != "null" ]]; then
 				RESOLVED_HTTP_PORT="$runtime_http"
+			fi
+			if [[ "$runtime_tweb" != "null" ]]; then
+				RESOLVED_TWEB_HTTPS_PORT="$runtime_tweb"
 			fi
 			if [[ "$runtime_redirect" == "true" && "$expose" == "true" ]]; then
 				RESOLVED_HTTP_ALLOWED="true"
@@ -237,6 +244,10 @@ resolve_runtime_ports() {
 		else
 			log_warn "Unable to evaluate runtime ports; verify dependencies."
 		fi
+	fi
+
+	if [[ -z "$RESOLVED_TWEB_HTTPS_PORT" || "$RESOLVED_TWEB_HTTPS_PORT" == "null" ]]; then
+		RESOLVED_TWEB_HTTPS_PORT="$RESOLVED_HTTPS_PORT"
 	fi
 }
 
@@ -356,6 +367,7 @@ apply_firewall() {
 	local https_port="$5"
 	local http_port="$6"
 	local expose_http="$7"
+	local tweb_port="$8"
 
 	sysctl -w net.ipv4.ip_forward=1 >/dev/null
 	cleanup_firewall_rules
@@ -366,6 +378,10 @@ apply_firewall() {
 
 	ensure_rule nat PREROUTING "$RULE_COMMENT" -i "$uplink" -p tcp --dport "$https_port" -j DNAT --to-destination "${ns_ip}:${https_port}"
 	ensure_rule nat OUTPUT "$RULE_COMMENT" -o lo -p tcp --dport "$https_port" -j DNAT --to-destination "${ns_ip}:${https_port}"
+	if [[ -n "$tweb_port" && "$tweb_port" != "null" && "$tweb_port" != "$https_port" ]]; then
+		ensure_rule nat PREROUTING "$RULE_COMMENT" -i "$uplink" -p tcp --dport "$tweb_port" -j DNAT --to-destination "${ns_ip}:${tweb_port}"
+		ensure_rule nat OUTPUT "$RULE_COMMENT" -o lo -p tcp --dport "$tweb_port" -j DNAT --to-destination "${ns_ip}:${tweb_port}"
+	fi
 
 	if [[ "$expose_http" == "true" ]]; then
 		ensure_rule nat PREROUTING "$RULE_COMMENT" -i "$uplink" -p tcp --dport "$http_port" -j DNAT --to-destination "${ns_ip}:${http_port}"
@@ -412,7 +428,7 @@ ensure_stack() {
 	ns_ip_plain="$(strip_mask "$ns_addr")"
 
 	setup_namespace "$ns" "$host_if" "$ns_if" "$host_addr" "$ns_addr" "$gateway"
-	apply_firewall "$cidr" "$uplink" "$host_if" "$ns_ip_plain" "$RESOLVED_HTTPS_PORT" "$RESOLVED_HTTP_PORT" "$RESOLVED_HTTP_ALLOWED"
+	apply_firewall "$cidr" "$uplink" "$host_if" "$ns_ip_plain" "$RESOLVED_HTTPS_PORT" "$RESOLVED_HTTP_PORT" "$RESOLVED_HTTP_ALLOWED" "$RESOLVED_TWEB_HTTPS_PORT"
 
 	local vpn_enabled vpn_config vpn_impl
 	vpn_enabled="$(cfg_raw '.vpn.enabled')"
@@ -503,6 +519,11 @@ status_report() {
 	echo "   Subnet: $cidr | Host IP: $host_addr | Sandbox IP: $ns_addr | Gateway: $gateway"
 	echo "   Uplink: ${uplink:-auto} | Follow server ports: $(pretty_bool "$follow")"
 	echo "   WAN HTTPS port: 🔒 $RESOLVED_HTTPS_PORT"
+	if [[ "$RESOLVED_TWEB_HTTPS_PORT" != "$RESOLVED_HTTPS_PORT" ]]; then
+		echo "   Telegram HTTPS port: 💬 $RESOLVED_TWEB_HTTPS_PORT"
+	else
+		echo "   Telegram HTTPS port: 💬 shared with main listener"
+	fi
 	if [[ "$RESOLVED_HTTP_ALLOWED" == "true" ]]; then
 		echo "   HTTP redirect passthrough: ✅ on port $RESOLVED_HTTP_PORT"
 	else
@@ -598,15 +619,24 @@ prompt_wireguard_path() {
 }
 
 prompt_manual_ports() {
-	local current_https current_http
+	local current_https current_http current_tweb
 	current_https="$(jq '.ports.https' "$CONFIG_FILE")"
 	current_http="$(jq '.ports.http' "$CONFIG_FILE")"
+	current_tweb="$(jq '.ports.twebHttps // .ports.https' "$CONFIG_FILE")"
 	read -rp "🔒 Public HTTPS port [$current_https]: " input_https
 	if [[ -n "$input_https" ]]; then
 		if [[ "$input_https" =~ ^[0-9]+$ ]]; then
 			set_config_number '.ports.https' "$input_https"
 		else
 			echo "Invalid port; keeping $current_https"
+		fi
+	fi
+	read -rp "💬 Telegram HTTPS port [$current_tweb]: " input_tweb
+	if [[ -n "$input_tweb" ]]; then
+		if [[ "$input_tweb" =~ ^[0-9]+$ ]]; then
+			set_config_number '.ports.twebHttps' "$input_tweb"
+		else
+			echo "Invalid port; keeping $current_tweb"
 		fi
 	fi
 	read -rp "🔁 Public HTTP redirect port [$current_http]: " input_http

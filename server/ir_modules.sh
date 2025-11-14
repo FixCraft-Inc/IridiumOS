@@ -2,6 +2,9 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
 REPO_URL="https://github.com/F1xGOD/tweb.git"
 MODULE_DIR="tweb"
 ENV_FILE=".env"
@@ -9,134 +12,664 @@ VPN_HTML="vpn-blocked.html"
 VPN_DB_ARCHIVE="vpn_db.tar.xz"
 PROTON_DB_ARCHIVE="protonext.tar.xz"
 RUNTIME_DIR=".irRUNTIME"
+MODULE_SCRIPT="$SCRIPT_DIR/modules/netns_guard.sh"
+NETNS_DIR="$SCRIPT_DIR/.iridium-netns"
+NETNS_CONFIG_FILE="$NETNS_DIR/config.json"
+DEFAULT_WG_PATH="$SCRIPT_DIR/secrets/wg0.conf"
 
-function install_telegram() {
-  if [ -d "$MODULE_DIR" ]; then
-    echo "[Telegram] Directory '$MODULE_DIR' already exists. Skipping clone."
-  else
-    echo "[Telegram] Cloning repository..."
-    git clone --recursive "$REPO_URL" "$MODULE_DIR"
-  fi
+RST="$(printf '\033[0m')"
+BOLD="$(printf '\033[1m')"
+GREEN="$(printf '\033[38;5;34m')"
+RED="$(printf '\033[31m')"
+YELLOW="$(printf '\033[33m')"
+CYAN="$(printf '\033[36m')"
 
-  echo "[Telegram] Installing dependencies with pnpm..."
-  (cd "$MODULE_DIR" && pnpm install)
-  echo "[Telegram] Installation completed."
+status_badge() {
+	local state="${1:-unknown}"
+	case "${state,,}" in
+		true|enabled|on|present|ready|installed|yes)
+			printf '%bENABLED%b' "$GREEN" "$RST"
+			;;
+		false|disabled|off|missing|no)
+			printf '%bDISABLED%b' "$RED" "$RST"
+			;;
+		*)
+			printf '%bUNKNOWN%b' "$YELLOW" "$RST"
+			;;
+	esac
 }
 
-function uninstall_telegram() {
-  if [ -d "$MODULE_DIR" ]; then
-    echo "[Telegram] Removing directory '$MODULE_DIR'..."
-    rm -rf "$MODULE_DIR"
-    echo "[Telegram] Uninstall completed."
-  else
-    echo "[Telegram] No existing installation found."
-  fi
+pause() {
+	read -rp "💘 Press Enter to continue..." _
 }
 
-function set_env_var() {
-  local key="$1"
-  local value="$2"
-  touch "$ENV_FILE"
-  if grep -q "^${key}=" "$ENV_FILE"; then
-    sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
-  else
-    echo "${key}=${value}" >> "$ENV_FILE"
-  fi
+print_invalid() {
+	echo -e "${YELLOW}[manager] That option is shy today. Try again!${RST}"
+	sleep 1
 }
 
-function repo_slug() {
-  local remote
-  remote=$(git config --get remote.origin.url)
-  remote=${remote%.git}
-  remote=${remote#git@github.com:}
-  remote=${remote#https://github.com/}
-  remote=${remote#git://github.com/}
-  echo "$remote"
+ensure_pnpm_available() {
+	if command -v pnpm >/dev/null 2>&1; then
+		return 0
+	fi
+	echo -e "${RED}[Telegram] pnpm is missing.${RST}"
+	echo "Install it with: curl -fsSL https://get.pnpm.io/install.sh | sh -"
+	echo "Then re-run this menu."
+	return 1
 }
 
-function current_branch() {
-  local branch
-  branch=$(git rev-parse --abbrev-ref HEAD)
-  if [ "$branch" = "HEAD" ]; then
-    branch=$(git rev-parse HEAD)
-  fi
-  echo "$branch"
+install_telegram() {
+	if [ -d "$MODULE_DIR" ]; then
+		echo "[Telegram] Directory '$MODULE_DIR' already exists. Pulling latest changes..."
+		( cd "$MODULE_DIR" && git pull --ff-only >/dev/null 2>&1 ) || true
+	else
+		echo "[Telegram] Cloning repository..."
+		git clone --recursive "$REPO_URL" "$MODULE_DIR"
+	fi
+	if ! ensure_pnpm_available; then
+		return 1
+	fi
+	echo "[Telegram] Installing dependencies with pnpm..."
+	( cd "$MODULE_DIR" && pnpm install )
+	echo "[Telegram] Install complete. 💘"
 }
 
-function enable_vpn_detection() {
-  local slug branch raw_url
-  slug=$(repo_slug)
-  branch=$(current_branch)
-  if [ -z "$slug" ] || [ -z "$branch" ]; then
-    echo "[VPN] Unable to determine repository slug or branch."
-    return 1
-  fi
-  raw_url="https://raw.githubusercontent.com/${slug}/${branch}/server/${VPN_HTML}"
-  echo "[VPN] Fetching HTML template from ${raw_url}"
-  curl -fsSL "$raw_url" -o "$VPN_HTML"
-
-  for archive in "$VPN_DB_ARCHIVE" "$PROTON_DB_ARCHIVE"; do
-    echo "[VPN] Downloading ${archive}..."
-    curl -fsSL "https://www.fixcraft.jp/database/${archive}" -o "$archive"
-  done
-
-  set_env_var "VPN_DETECTION_ENABLED" "true"
-  echo "[VPN] Detection enabled. Restart the server to apply changes."
+uninstall_telegram() {
+	if [ -d "$MODULE_DIR" ]; then
+		echo "[Telegram] Removing directory '$MODULE_DIR'..."
+		rm -rf "$MODULE_DIR"
+		echo "[Telegram] Uninstall complete."
+	else
+		echo "[Telegram] No existing installation found."
+	fi
 }
 
-function disable_vpn_detection() {
-  echo "[VPN] Disabling detection and cleaning up artifacts..."
-  rm -f "$VPN_HTML" "$VPN_DB_ARCHIVE" "$PROTON_DB_ARCHIVE"
-  if [ -d "$RUNTIME_DIR" ]; then
-    rm -rf "$RUNTIME_DIR"
-  fi
-  set_env_var "VPN_DETECTION_ENABLED" "false"
-  echo "[VPN] Detection disabled. Restart the server to apply changes."
+set_env_var() {
+	local key="$1"
+	local value="$2"
+	touch "$ENV_FILE"
+	if grep -q "^${key}=" "$ENV_FILE"; then
+		sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
+	else
+		echo "${key}=${value}" >>"$ENV_FILE"
+	fi
 }
 
-function show_menu() {
-  echo "IridiumOS Module Manager"
-  echo "========================"
-  echo "Telegram"
-  echo "  1) Install"
-  echo "  2) Uninstall"
-  echo
-  echo "VPN Detection"
-  echo "  3) Enable (fetch assets)"
-  echo "  4) Disable (remove assets)"
-  echo
-  echo "Network Sandbox"
-  echo "  5) 🧊 Server namespace + WireGuard"
-  echo
-  echo "6) Exit"
-  echo
+unset_env_var() {
+	local key="$1"
+	if [ ! -f "$ENV_FILE" ]; then
+		return 0
+	fi
+	sed -i "/^${key}=.*/d" "$ENV_FILE"
 }
 
-while true; do
-  show_menu
-  read -rp "Select an option: " choice
-  case "$choice" in
-    1)
-      install_telegram
-      ;;
-    2)
-      uninstall_telegram
-      ;;
-    3)
-      enable_vpn_detection
-      ;;
-    4)
-      disable_vpn_detection
-      ;;
-    5)
-      ./modules/netns_guard.sh interactive
-      ;;
-    6)
-      echo "Goodbye!"
-      exit 0
-      ;;
-    *)
-      echo "Invalid option. Please try again."
-      ;;
-  esac
-done
+get_env_var() {
+	local key="$1"
+	[ -f "$ENV_FILE" ] || return 0
+	grep -E "^${key}=" "$ENV_FILE" | tail -n1 | cut -d= -f2-
+}
+
+trim_spaces() {
+	local value="$1"
+	# shellcheck disable=SC2001
+	printf '%s' "$(echo "$value" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+}
+
+normalize_host_list() {
+	local input="$1"
+	local cleaned=()
+	local part host
+	IFS=',' read -r -a parts <<<"$input"
+	for part in "${parts[@]}"; do
+		host="$(trim_spaces "$part")"
+		host="${host,,}"
+		# remove internal whitespace characters
+		host="${host//[$'\t\r\n ']/}"
+		if [ -n "$host" ]; then
+			cleaned+=("$host")
+		fi
+	done
+	if [ "${#cleaned[@]}" -eq 0 ]; then
+		printf ''
+	else
+		(IFS=','; printf '%s' "${cleaned[*]}")
+	fi
+}
+
+env_value_or_default() {
+	local key="$1"
+	local fallback="$2"
+	local value
+	value="$(get_env_var "$key")"
+	if [ -n "$value" ]; then
+		printf '%s\n' "$value"
+	else
+		printf '%s\n' "$fallback"
+	fi
+}
+
+env_bool() {
+	local key="$1"
+	local fallback="${2:-false}"
+	local raw
+	raw="$(get_env_var "$key")"
+	if [ -z "$raw" ]; then
+		printf '%s\n' "$fallback"
+		return
+	fi
+	raw="${raw,,}"
+	case "$raw" in
+		1|true|yes|on) printf 'true\n' ;;
+		0|false|no|off) printf 'false\n' ;;
+		*) printf '%s\n' "$fallback" ;;
+	esac
+}
+
+dns_mode_use_cf() {
+	env_bool "USE_CF" "true"
+}
+
+dns_default_https_port() {
+	if [ "$(dns_mode_use_cf)" = "true" ]; then
+		printf '3433\n'
+	else
+		printf '443\n'
+	fi
+}
+
+dns_default_tweb_port() {
+	if [ "$(dns_mode_use_cf)" = "true" ]; then
+		printf '3434\n'
+	else
+		dns_default_https_port
+	fi
+}
+
+dns_effective_https_port() {
+	env_value_or_default "HTTPS_PORT" "$(dns_default_https_port)"
+}
+
+dns_effective_tweb_port() {
+	env_value_or_default "TWEB_HTTPS_PORT" "$(dns_default_tweb_port)"
+}
+
+dns_effective_http_port() {
+	env_value_or_default "HTTP_PORT" "80"
+}
+
+dns_redirect_enabled() {
+	if [ "$(dns_mode_use_cf)" = "true" ]; then
+		printf 'false\n'
+	else
+		env_bool "ENABLE_HTTP_REDIRECT" "true"
+	fi
+}
+
+format_host_display() {
+	local raw="$1"
+	if [ -z "$raw" ]; then
+		printf 'any (allow all)'
+	else
+		printf '%s' "${raw//,/, }"
+	fi
+}
+
+prompt_host_allowlist() {
+	local label="$1"
+	local key="$2"
+	local current
+	current="$(get_env_var "$key")"
+	if [ -z "$current" ]; then
+		current="(any)"
+	fi
+	echo "$label hosts are currently: $current"
+	read -rp "Enter comma-separated hostnames (empty = keep, '-' = allow all): " input_hosts
+	if [ -z "$input_hosts" ]; then
+		echo "No changes."
+		return
+	fi
+	if [ "$input_hosts" = "-" ]; then
+		unset_env_var "$key"
+		echo "$label host allowlist cleared (any host accepted)."
+		return
+	fi
+	local normalized
+	normalized="$(normalize_host_list "$input_hosts")"
+	if [ -z "$normalized" ]; then
+		unset_env_var "$key"
+		echo "$label host allowlist cleared."
+	else
+		set_env_var "$key" "$normalized"
+		echo "$label hosts updated to: $normalized"
+	fi
+}
+
+apply_dns_mode_pure() {
+	set_env_var "USE_CF" "false"
+	set_env_var "HTTPS_PORT" "443"
+	set_env_var "TWEB_HTTPS_PORT" "443"
+	set_env_var "HTTP_PORT" "80"
+	set_env_var "ENABLE_HTTP_REDIRECT" "true"
+	echo "[DNS] Switched to Pure DNS mode (HTTPS :443, redirector :80)."
+}
+
+apply_dns_mode_cloudflare() {
+	set_env_var "USE_CF" "true"
+	set_env_var "HTTPS_PORT" "3433"
+	set_env_var "TWEB_HTTPS_PORT" "3434"
+	set_env_var "HTTP_PORT" "80"
+	set_env_var "ENABLE_HTTP_REDIRECT" "false"
+	echo "[DNS] Switched to Cloudflare dual-port mode (main :3433, Telegram :3434)."
+}
+
+dns_menu() {
+	while true; do
+		local use_cf mode_label main_port tweb_port http_port redirect main_hosts_raw tweb_hosts_raw
+		use_cf="$(dns_mode_use_cf)"
+		if [ "$use_cf" = "true" ]; then
+			mode_label="Cloudflare dual-port"
+		else
+			mode_label="Pure DNS"
+		fi
+		main_port="$(dns_effective_https_port)"
+		tweb_port="$(dns_effective_tweb_port)"
+		http_port="$(dns_effective_http_port)"
+		redirect="$(dns_redirect_enabled)"
+		main_hosts_raw="$(get_env_var "MAIN_HOSTS")"
+		tweb_hosts_raw="$(get_env_var "TWEB_HOSTS")"
+		echo
+		echo -e "${BOLD}🌐 DNS & Origins${RST}"
+		echo "   Mode: $mode_label"
+		echo "   Main HTTPS: 🔒 $main_port | Telegram HTTPS: 💬 $tweb_port"
+		echo "   HTTP redirect: $(status_badge "$redirect") (port $http_port)"
+		echo "   Main hosts: $(format_host_display "$main_hosts_raw")"
+		echo "   Telegram hosts: $(format_host_display "$tweb_hosts_raw")"
+		echo
+		cat <<'EOF'
+  1) Switch to Pure DNS (443/80 shared)
+  2) Switch to Cloudflare dual-port (3433/3434)
+  3) Edit main host allowlist
+  4) Edit Telegram host allowlist
+  5) ↩️ Back
+EOF
+		echo
+		read -rp "Select an option: " choice
+		case "$choice" in
+			1)
+				apply_dns_mode_pure
+				pause
+				;;
+			2)
+				apply_dns_mode_cloudflare
+				pause
+				;;
+			3)
+				prompt_host_allowlist "Main" "MAIN_HOSTS"
+				pause
+				;;
+			4)
+				prompt_host_allowlist "Telegram" "TWEB_HOSTS"
+				pause
+				;;
+			5)
+				return
+				;;
+			*)
+				print_invalid
+				;;
+		esac
+	done
+}
+
+
+repo_slug() {
+	local remote
+	remote=$(git config --get remote.origin.url 2>/dev/null || true)
+	remote=${remote%.git}
+	remote=${remote#git@github.com:}
+	remote=${remote#https://github.com/}
+	remote=${remote#git://github.com/}
+	printf '%s\n' "$remote"
+}
+
+current_branch() {
+	local branch
+	branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+	if [ "$branch" = "HEAD" ]; then
+		branch=$(git rev-parse HEAD 2>/dev/null || echo "")
+	fi
+	printf '%s\n' "$branch"
+}
+
+enable_vpn_detection() {
+	local slug branch raw_url
+	slug=$(repo_slug)
+	branch=$(current_branch)
+	if [ -z "$slug" ] || [ -z "$branch" ]; then
+		echo "[VPN] Unable to determine repository slug or branch."
+		return 1
+	}
+	raw_url="https://raw.githubusercontent.com/${slug}/${branch}/server/${VPN_HTML}"
+	echo "[VPN] Fetching HTML template from ${raw_url}"
+	curl -fsSL "$raw_url" -o "$VPN_HTML"
+
+	for archive in "$VPN_DB_ARCHIVE" "$PROTON_DB_ARCHIVE"; do
+		echo "[VPN] Downloading ${archive}..."
+		curl -fsSL "https://www.fixcraft.jp/database/${archive}" -o "$archive"
+	done
+
+	set_env_var "VPN_DETECTION_ENABLED" "true"
+	echo "[VPN] Detection enabled. Restart the server to apply changes."
+}
+
+disable_vpn_detection() {
+	echo "[VPN] Disabling detection and cleaning up artifacts..."
+	rm -f "$VPN_HTML" "$VPN_DB_ARCHIVE" "$PROTON_DB_ARCHIVE"
+	if [ -d "$RUNTIME_DIR" ]; then
+		rm -rf "$RUNTIME_DIR"
+	fi
+	set_env_var "VPN_DETECTION_ENABLED" "false"
+	echo "[VPN] Detection disabled. Restart the server to apply changes."
+}
+
+is_telegram_installed() {
+	if [ -d "$MODULE_DIR" ]; then
+		echo "true"
+	else
+		echo "false"
+	fi
+}
+
+vpn_detection_enabled() {
+	local raw
+	raw="$(get_env_var "VPN_DETECTION_ENABLED" | tr '[:upper:]' '[:lower:]')"
+	if [[ "$raw" == "true" || "$raw" == "1" ]]; then
+		echo "true"
+	else
+		echo "false"
+	fi
+}
+
+netns_config_value() {
+	local query="$1" output
+	if ! command -v jq >/dev/null 2>&1; then
+		return
+	fi
+	if [ ! -f "$NETNS_CONFIG_FILE" ]; then
+		return
+	fi
+	if output="$(jq -r "$query // empty" "$NETNS_CONFIG_FILE" 2>/dev/null)"; then
+		printf '%s\n' "$output"
+	fi
+}
+
+sandbox_enabled() {
+	local value
+	value="$(netns_config_value '.enabled')"
+	if [ "$value" = "true" ]; then
+		echo "true"
+	else
+		echo "false"
+	fi
+}
+
+wireguard_enabled() {
+	local value
+	value="$(netns_config_value '.vpn.enabled')"
+	if [ "$value" = "true" ]; then
+		echo "true"
+	else
+		echo "false"
+	fi
+}
+
+wireguard_config_path() {
+	local value
+	value="$(netns_config_value '.vpn.configPath')"
+	if [ -z "$value" ] || [ "$value" = "null" ]; then
+		printf '%s\n' "$DEFAULT_WG_PATH"
+		return
+	fi
+	if [[ "$value" != /* ]]; then
+		printf '%s\n' "$SCRIPT_DIR/$value"
+	else
+		printf '%s\n' "$value"
+	fi
+}
+
+wireguard_config_ready() {
+	local path
+	path="$(wireguard_config_path)"
+	if [ -n "$path" ] && [ -f "$path" ]; then
+		echo "true"
+	else
+		echo "false"
+	fi
+}
+
+run_netns_guard() {
+	if [ ! -x "$MODULE_SCRIPT" ]; then
+		echo "[Sandbox] modules/netns_guard.sh is missing or not executable."
+		return 1
+	fi
+	if (( EUID == 0 )); then
+		"$MODULE_SCRIPT" "$@"
+	elif command -v sudo >/dev/null 2>&1; then
+		sudo "$MODULE_SCRIPT" "$@"
+	else
+		echo "[Sandbox] Root privileges are required for this action."
+		return 1
+	fi
+}
+
+update_netns_config_bool() {
+	local key="$1"
+	local value="$2"
+	if ! command -v jq >/dev/null 2>&1; then
+		echo "[Sandbox] jq is required. Run tryinstall.sh first."
+		return 1
+	fi
+	if [ ! -f "$NETNS_CONFIG_FILE" ]; then
+		echo "[Sandbox] Sandbox config is missing. Launch option 5 to initialize it."
+		return 1
+	fi
+	local tmp
+	tmp="$(mktemp)"
+	if jq "$key = $value" "$NETNS_CONFIG_FILE" >"$tmp"; then
+		mv "$tmp" "$NETNS_CONFIG_FILE"
+		return 0
+	fi
+	rm -f "$tmp"
+	echo "[Sandbox] Failed to update the config file."
+	return 1
+}
+
+toggle_sandbox_stack() {
+	local current
+	current="$(sandbox_enabled)"
+	if [ "$current" = "true" ]; then
+		echo "[Sandbox] Disabling namespace + firewall..."
+		if update_netns_config_bool '.enabled' false; then
+			run_netns_guard teardown --quiet || true
+			echo "[Sandbox] Namespace disabled."
+		fi
+	else
+		echo "[Sandbox] Enabling namespace + firewall..."
+		if [ ! -f "$NETNS_CONFIG_FILE" ]; then
+			echo "[Sandbox] Config missing; attempting to bootstrap defaults."
+			run_netns_guard ensure --quiet || true
+		fi
+		if update_netns_config_bool '.enabled' true; then
+			run_netns_guard ensure --quiet || true
+			echo "[Sandbox] Namespace enabled."
+		fi
+	fi
+}
+
+ensure_wireguard_stub() {
+	local path
+	path="$(wireguard_config_path)"
+	if [ -z "$path" ]; then
+		path="$DEFAULT_WG_PATH"
+	fi
+	mkdir -p "$(dirname "$path")"
+	if [ -f "$path" ]; then
+		echo "[Sandbox] WireGuard config already exists at $path"
+		return 0
+	fi
+	cat >"$path" <<'EOF'
+[Interface]
+# Replace the values below with your real WireGuard credentials
+PrivateKey = CHANGE_ME
+Address = 10.0.0.2/32
+DNS = 1.1.1.1
+
+[Peer]
+PublicKey = YOUR_UPLINK_KEY
+AllowedIPs = 0.0.0.0/0, ::/0
+Endpoint = vpn.example.com:51820
+PersistentKeepalive = 25
+EOF
+	chmod 600 "$path"
+	echo "[Sandbox] Created WireGuard template at $path"
+}
+
+toggle_vpn_detection() {
+	if [ "$(vpn_detection_enabled)" = "true" ]; then
+		disable_vpn_detection
+	else
+		enable_vpn_detection
+	fi
+}
+
+toggle_telegram_module() {
+	if [ "$(is_telegram_installed)" = "true" ]; then
+		uninstall_telegram
+	else
+		install_telegram
+	fi
+}
+
+modules_menu() {
+	while true; do
+		local telegram_state
+		telegram_state="$(is_telegram_installed)"
+		echo
+		echo -e "${BOLD}💬 Telegram Web Module${RST}"
+		echo "   Status: $(status_badge "$telegram_state")"
+		echo
+		cat <<'EOF'
+  1) Toggle Telegram Web (install/uninstall)
+  2) Back
+EOF
+		echo
+		read -rp "Select an option: " choice
+		case "$choice" in
+			1)
+				toggle_telegram_module
+				pause
+				;;
+			2)
+				return
+				;;
+			*)
+				print_invalid
+				;;
+		esac
+	done
+}
+
+security_menu() {
+	while true; do
+		local vpn_state sandbox_state wg_state wg_path wg_enabled_state
+		vpn_state="$(vpn_detection_enabled)"
+		sandbox_state="$(sandbox_enabled)"
+		wg_state="$(wireguard_config_ready)"
+		wg_enabled_state="$(wireguard_enabled)"
+		wg_path="$(wireguard_config_path)"
+		echo
+		echo -e "${BOLD}🛡️  FixCraft Security Suite${RST}"
+		echo "   VPN detection:        $(status_badge "$vpn_state")"
+		echo "   Sandbox firewall:     $(status_badge "$sandbox_state")"
+		echo "   WireGuard tunnel:     $(status_badge "$wg_enabled_state")"
+		echo "   wg0.conf presence:    $(status_badge "$wg_state") (${wg_path})"
+		echo
+		cat <<'EOF'
+  1) Toggle VPN detection
+  2) Toggle sandbox firewall / namespace
+  3) Ensure wg0.conf template
+  4) Quick sandbox status (requires sudo)
+  5) 🧊 Server namespace + WireGuard toolkit
+  6) ↩️ Back
+EOF
+		echo
+		read -rp "Select an option: " choice
+		case "$choice" in
+			1)
+				toggle_vpn_detection
+				pause
+				;;
+			2)
+				toggle_sandbox_stack
+				pause
+				;;
+			3)
+				ensure_wireguard_stub
+				pause
+				;;
+			4)
+				run_netns_guard status || true
+				pause
+				;;
+			5)
+				run_netns_guard interactive || true
+				;;
+			6)
+				return
+				;;
+			*)
+				print_invalid
+				;;
+		esac
+	done
+}
+
+main_menu() {
+	echo -e "${BOLD}💘 FixCraft Module Switchboard${RST}"
+	echo "👉👈 Pick a vibe to toggle."
+	while true; do
+		local telegram_state vpn_state sandbox_state
+		telegram_state="$(is_telegram_installed)"
+		vpn_state="$(vpn_detection_enabled)"
+		sandbox_state="$(sandbox_enabled)"
+		echo
+		echo -e "${CYAN}✨ Manage Modules${RST}"
+		echo "  1) 💬 Telegram Web: $(status_badge "$telegram_state")"
+		echo
+		echo -e "${CYAN}🌐 Manage DNS & Origins${RST}"
+		echo "  2) Configure hostnames + port mode"
+		echo
+		echo -e "${CYAN}🛡️ Manage Security${RST}"
+		echo "  3) Toggle VPN/firewall features"
+		echo "     VPN detection: $(status_badge "$vpn_state")"
+		echo "     Sandbox:       $(status_badge "$sandbox_state")"
+		echo
+		echo "  4) ↩️ Exit"
+		echo
+		read -rp "Select a category: " choice
+		case "$choice" in
+			1) modules_menu ;;
+			2) dns_menu ;;
+			3) security_menu ;;
+			4)
+				echo "💘 Bye! Stay cozy."
+				exit 0
+				;;
+			*)
+				print_invalid
+				;;
+		esac
+	done
+}
+
+main_menu

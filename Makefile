@@ -198,8 +198,10 @@ static: all
 	cp -r build/* static/
 	cp -r public/* static/
 
+SERVER_FLAGS ?=
+
 server: FORCE
-	cd server; ./run-server.sh
+	cd server; ./run-server.sh $(SERVER_FLAGS)
 
 # v86 imports
 v86/src/rust/gen/jit.rs: 

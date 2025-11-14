@@ -8,6 +8,7 @@ import crypto from "crypto";
 import { spawnSync } from "child_process";
 import { fileURLToPath } from "url";
 import dotenv from "dotenv";
+import readline from "readline";
 import wispPkg from "wisp-server-node";
 
 const wisp = wispPkg.default ?? wispPkg; // works whether wisp is CJS or ESM
@@ -103,6 +104,42 @@ function parseBoolean(value, defaultValue = false) {
 	return !["0", "false", "off", "no"].includes(normalized);
 }
 
+const launchedByRunServer = process.env.IR_SERVER_LAUNCHER === "run-server";
+const allowDirectServerLaunch = parseBoolean(
+	process.env.IR_ALLOW_DIRECT_SERVER ?? "false",
+	false,
+);
+if (!launchedByRunServer && !allowDirectServerLaunch) {
+	console.error(
+		"[boot] Direct 'node server.js' execution is disabled. Please run './run-server.sh' or 'make server'.",
+	);
+	process.exit(1);
+}
+
+const consoleModePreference = (
+	process.env.IR_SERVER_CONSOLE_MODE || "interactive"
+).toLowerCase();
+const interactiveConsoleRequested = consoleModePreference !== "noninteractive";
+const stdinIsTTY = Boolean(process.stdin.isTTY);
+if (interactiveConsoleRequested && !stdinIsTTY) {
+	console.warn(
+		"[console] Interactive mode requested but stdin is not a TTY; falling back to non-interactive mode.",
+	);
+}
+const consoleMode =
+	interactiveConsoleRequested && stdinIsTTY ? "interactive" : "noninteractive";
+const interactiveConsoleEnabled = consoleMode === "interactive";
+console.log(
+	`[console] Mode: ${
+		interactiveConsoleEnabled
+			? "interactive (type 'stop' to shut down)"
+			: "non-interactive (signals only)"
+	}`,
+);
+
+let consoleInterface = null;
+let consoleClosing = false;
+
 function generateCookieSecret() {
 	return crypto.randomBytes(32).toString("base64url");
 }
@@ -149,9 +186,14 @@ const DROP_PRIVS_GROUP = process.env.DROP_PRIVS_GROUP || "nogroup";
 const SHOULD_DROP_ROOT =
 	typeof process.getuid === "function" && process.getuid() === 0;
 const HTTPS_PORT = Number(process.env.HTTPS_PORT || (USE_CF ? 3433 : 443));
-const HTTP_PORT = Number(process.env.HTTP_PORT || (USE_CF ? 8080 : 80));
-const ENABLE_HTTP_REDIRECT =
-	!USE_CF || parseBoolean(process.env.ENABLE_HTTP_REDIRECT, false);
+const TWEB_HTTPS_PORT = Number(
+	process.env.TWEB_HTTPS_PORT || (USE_CF ? 3434 : HTTPS_PORT),
+);
+const HTTP_PORT = Number(process.env.HTTP_PORT || 80);
+const ENABLE_HTTP_REDIRECT = USE_CF
+	? false
+	: parseBoolean(process.env.ENABLE_HTTP_REDIRECT ?? "true", true);
+const USE_SEPARATE_TWEB_PORT = TWEB_HTTPS_PORT !== HTTPS_PORT;
 const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 15000);
 const RATE_LIMIT_MAX_REQUESTS = Number(
 	process.env.RATE_LIMIT_MAX_REQUESTS || 300,
@@ -524,12 +566,36 @@ function cleanupRuntimeArtifacts() {
 	}
 }
 
-process.on("exit", cleanupRuntimeArtifacts);
-["SIGINT", "SIGTERM", "SIGQUIT"].forEach((signalName) => {
+let runtimeCleanupTriggered = false;
+function cleanupRuntimeArtifactsSafe() {
+	if (runtimeCleanupTriggered) {
+		return;
+	}
+	runtimeCleanupTriggered = true;
+	cleanupRuntimeArtifacts();
+}
+process.once("exit", cleanupRuntimeArtifactsSafe);
+
+const shutdownController = createShutdownController({
+	cleanup: cleanupRuntimeArtifactsSafe,
+});
+
+["SIGTERM", "SIGQUIT"].forEach((signalName) => {
 	process.on(signalName, () => {
-		cleanupRuntimeArtifacts();
-		process.exit(0);
+		void initiateShutdown(`${signalName} signal`);
 	});
+});
+
+process.on("SIGINT", () => {
+	if (interactiveConsoleEnabled) {
+		console.log("[console] Ctrl+C is disabled. Type 'stop' to shut down.");
+		if (consoleInterface) {
+			consoleInterface.prompt();
+		}
+		return;
+	}
+	console.log("[console] Ctrl+C received; shutting down.");
+	void initiateShutdown("SIGINT (Ctrl+C)");
 });
 // --- robust host parser: CSV | JSON[] -> Set(hosts) ---
 function parseHosts(input, fallbackCSV = "") {
@@ -1777,14 +1843,17 @@ const twebHostApp = createProtectedHostApp({
 	openPrefixes: TWEB_AUTH_OPEN_PREFIXES,
 });
 twebHostApp.use(twebContentApp);
+const mainDispatcher = createMainDispatcher({
+	allowTwebHosts: !USE_SEPARATE_TWEB_PORT,
+});
+const twebDispatcher = USE_SEPARATE_TWEB_PORT ? createTwebDispatcher() : null;
 
 // === VHOST DISPATCH ===
-function vhostDispatch(req, res, next) {
-	// Early VPN/Direct IP check at vhost level
+function enforceEdgeGuards(req, res) {
 	if (isDirectIpAccess(req)) {
 		console.warn(`[security] Blocked direct IP access from ${getClientIp(req)} at vhost level`);
 		renderDirectIpBlockedPage(res);
-		return;
+		return true;
 	}
 	if (USE_CF && !isCloudflareRequest(req)) {
 		console.warn(
@@ -1794,27 +1863,70 @@ function vhostDispatch(req, res, next) {
 			res,
 			"Firewall-chan only trusts Cloudflare shields right now.",
 		);
-		return;
+		return true;
 	}
-	
 	const clientIp = getClientIp(req);
 	const vpnProvider = VPN_DETECTION_ENABLED && clientIp ? isVpnIp(clientIp) : false;
 	if (vpnProvider) {
 		console.warn(`[security] Blocked VPN IP: ${clientIp} (${vpnProvider}) at vhost level`);
 		const protonMeta = getProtonMetadataForIp(clientIp);
 		renderVpnBlockedPage(res, vpnProvider, protonMeta);
-		return;
+		return true;
 	}
-	
-	const host = (req.headers.host || "").replace(/:\d+$/, "").toLowerCase();
-	if (TWEB_HOSTS.has(host)) return twebHostApp(req, res, next);
-	if (MAIN_HOSTS.size && !MAIN_HOSTS.has(host)) {
-		res.statusCode = 421;
-		res.setHeader("Content-Type", "text/plain; charset=utf-8");
-		res.end("Unknown vhost");
-		return;
-	}
-	return mainApp(req, res, next);
+	return false;
+}
+
+function respondUnknownHost(res, message = "Unknown vhost") {
+	res.statusCode = 421;
+	res.setHeader("Content-Type", "text/plain; charset=utf-8");
+	res.end(message);
+}
+
+function createMainDispatcher({ allowTwebHosts }) {
+	return function mainDispatcher(req, res, next) {
+		if (enforceEdgeGuards(req, res)) {
+			return;
+		}
+		const host = (req.headers.host || "").replace(/:\d+$/, "").toLowerCase();
+		if (allowTwebHosts && TWEB_HOSTS.has(host)) {
+			return twebHostApp(req, res, next);
+		}
+		if (!allowTwebHosts && TWEB_HOSTS.has(host)) {
+			respondUnknownHost(
+				res,
+				`Telegram hosts listen on HTTPS port ${TWEB_HTTPS_PORT}.`,
+			);
+			return;
+		}
+		if (MAIN_HOSTS.size && !MAIN_HOSTS.has(host)) {
+			respondUnknownHost(res);
+			return;
+		}
+		return mainApp(req, res, next);
+	};
+}
+
+function createTwebDispatcher() {
+	return function twebDispatcher(req, res, next) {
+		if (enforceEdgeGuards(req, res)) {
+			return;
+		}
+		const host = (req.headers.host || "").replace(/:\d+$/, "").toLowerCase();
+		if (TWEB_HOSTS.size === 0) {
+			respondUnknownHost(
+				res,
+				"Telegram module hostnames are not configured. Run ir_modules.sh.",
+			);
+			return;
+		}
+		if (TWEB_HOSTS.has(host)) {
+			return twebHostApp(req, res, next);
+		}
+		respondUnknownHost(
+			res,
+			"Telegram module expects one of the configured hostnames.",
+		);
+	};
 }
 // --- Debug app passthrough ---
 if (debugAppFolder) {
@@ -1952,14 +2064,29 @@ function loadHttpsOptions() {
 const httpsOptions = loadHttpsOptions();
 
 // --- HTTPS primary ---
-const httpsServer = https.createServer(httpsOptions, vhostDispatch);
+const httpsServer = https.createServer(httpsOptions, mainDispatcher);
 hardenHttpServer(httpsServer);
+shutdownController.track(httpsServer, "HTTPS");
 httpsServer.listen(HTTPS_PORT, () => {
 	console.log(
-		`[server] 🚀 HTTPS listening on :${HTTPS_PORT} (${USE_CF ? "Cloudflare origin" : "direct"})`,
+		`[server] 🚀 Main HTTPS listening on :${HTTPS_PORT} (${USE_CF ? "Cloudflare origin" : "direct"})`,
 	);
+	ensureInteractiveConsoleReady();
 });
 trackServerForPrivilegeDrop(httpsServer);
+
+let twebHttpsServer = null;
+if (USE_SEPARATE_TWEB_PORT && twebDispatcher) {
+	twebHttpsServer = https.createServer(httpsOptions, twebDispatcher);
+	hardenHttpServer(twebHttpsServer);
+	shutdownController.track(twebHttpsServer, "Telegram HTTPS");
+	twebHttpsServer.listen(TWEB_HTTPS_PORT, () => {
+		console.log(
+			`[server] 💬 Telegram HTTPS listening on :${TWEB_HTTPS_PORT} (dedicated Cloudflare tunnel)`,
+		);
+	});
+	trackServerForPrivilegeDrop(twebHttpsServer);
+}
 
 // WISP over WSS
 httpsServer.on("upgrade", (req, socket, head) => {
@@ -1989,7 +2116,7 @@ httpsServer.on("upgrade", (req, socket, head) => {
 
 let httpRedirectServer = null;
 	if (ENABLE_HTTP_REDIRECT) {
-		httpRedirectServer = http.createServer((req, res) => {
+	httpRedirectServer = http.createServer((req, res) => {
 			if (USE_CF && !isCloudflareRequest(req)) {
 				renderDirectIpBlockedPage(
 					res,
@@ -2021,9 +2148,154 @@ let httpRedirectServer = null;
 		});
 		res.end("Redirecting to HTTPS");
 	});
-	hardenHttpServer(httpRedirectServer);
-	httpRedirectServer.listen(HTTP_PORT, () => {
-		console.log(`[server] ↪ HTTP redirector on :${HTTP_PORT} → HTTPS :${HTTPS_PORT}`);
+hardenHttpServer(httpRedirectServer);
+shutdownController.track(httpRedirectServer, "HTTP redirect");
+httpRedirectServer.listen(HTTP_PORT, () => {
+	console.log(`[server] ↪ HTTP redirector on :${HTTP_PORT} → HTTPS :${HTTPS_PORT}`);
+});
+trackServerForPrivilegeDrop(httpRedirectServer);
+}
+
+function ensureInteractiveConsoleReady() {
+	if (!interactiveConsoleEnabled || consoleInterface) {
+		return;
+	}
+	consoleInterface = startInteractiveConsole({
+		onStop() {
+			void initiateShutdown("console stop command");
+		},
+		shouldContinue: () => !shutdownController.isShuttingDown(),
 	});
-	trackServerForPrivilegeDrop(httpRedirectServer);
+}
+
+function closeConsoleInterface() {
+	if (!consoleInterface) {
+		return;
+	}
+	consoleClosing = true;
+	consoleInterface.close();
+}
+
+function startInteractiveConsole({ onStop, shouldContinue }) {
+	const rl = readline.createInterface({
+		input: process.stdin,
+		output: process.stdout,
+		terminal: true,
+	});
+	rl.setPrompt("> ");
+	console.log(
+		"[console] Type 'stop' to safely shut down. Ctrl+C is ignored in this mode.",
+	);
+	rl.on("line", (line) => {
+		const trimmed = line.trim().toLowerCase();
+		if (!trimmed) {
+			if (shouldContinue()) {
+				rl.prompt();
+			}
+			return;
+		}
+		if (trimmed === "stop") {
+			onStop();
+			return;
+		}
+		console.log(`[console] Unknown command: ${trimmed}`);
+		if (shouldContinue()) {
+			rl.prompt();
+		}
+	});
+	rl.on("SIGINT", () => {
+		if (shouldContinue()) {
+			rl.prompt();
+		}
+	});
+	rl.on("close", () => {
+		if (!consoleClosing) {
+			console.log(
+				"[console] Input stream closed. Send SIGINT in non-interactive mode or type 'stop' next time to exit.",
+			);
+		}
+		consoleClosing = false;
+		consoleInterface = null;
+	});
+	rl.prompt();
+	return rl;
+}
+
+function initiateShutdown(reason, exitCode = 0) {
+	closeConsoleInterface();
+	return shutdownController.request(reason, exitCode);
+}
+
+function createShutdownController({ cleanup } = {}) {
+	const tracked = [];
+	let shuttingDown = false;
+	function track(server, label = "server") {
+		if (!server || typeof server.close !== "function") {
+			return;
+		}
+		tracked.push({ server, label });
+	}
+	function closeServer(entry) {
+		return new Promise((resolve) => {
+			try {
+				entry.server.close((err) => {
+					if (
+						err &&
+						err.code !== "ERR_SERVER_NOT_RUNNING" &&
+						err.code !== "ERR_SERVER_NOT_LISTENING"
+					) {
+						console.error(
+							`[server] Error closing ${entry.label}: ${
+								err instanceof Error ? err.message : err
+							}`,
+						);
+					}
+					resolve();
+				});
+			} catch (error) {
+				if (
+					!(error && typeof error === "object" && error.code === "ERR_SERVER_NOT_RUNNING")
+				) {
+					console.error(
+						`[server] Error closing ${entry.label}: ${
+							error instanceof Error ? error.message : error
+						}`,
+					);
+				}
+				resolve();
+			}
+		});
+	}
+	async function request(reason = "shutdown", exitCode = 0) {
+		if (shuttingDown) {
+			return;
+		}
+		shuttingDown = true;
+		console.log(`[server] 💘 Shutting down (${reason})...`);
+		try {
+			await Promise.all(tracked.map((entry) => closeServer(entry)));
+		} catch (error) {
+			console.error(
+				`[server] Error while closing servers: ${
+					error instanceof Error ? error.message : error
+				}`,
+			);
+		}
+		if (typeof cleanup === "function") {
+			try {
+				cleanup();
+			} catch (error) {
+				console.error(
+					`[server] Cleanup error: ${error instanceof Error ? error.message : error}`,
+				);
+			}
+		}
+		console.log("[server] Shutdown complete. Goodbye 💘");
+		process.exit(exitCode);
+	}
+	return {
+		track,
+		request,
+		isShuttingDown: () => shuttingDown,
+	};
 }

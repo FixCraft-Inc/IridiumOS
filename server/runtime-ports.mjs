@@ -27,13 +27,18 @@ function parseBoolean(value, defaultValue = false) {
 }
 
 const useCf = parseBoolean(process.env.USE_CF ?? "true", true);
-const enableHttpRedirect =
-	!useCf || parseBoolean(process.env.ENABLE_HTTP_REDIRECT ?? "false", false);
 const httpsPort = Number(process.env.HTTPS_PORT || (useCf ? 3433 : 443));
-const httpPort = Number(process.env.HTTP_PORT || (useCf ? 8080 : 80));
+const twebHttpsPort = Number(
+	process.env.TWEB_HTTPS_PORT || (useCf ? 3434 : httpsPort),
+);
+const enableHttpRedirect = useCf
+	? false
+	: parseBoolean(process.env.ENABLE_HTTP_REDIRECT ?? "true", true);
+const httpPort = Number(process.env.HTTP_PORT || 80);
 
 const payload = {
 	httpsPort,
+	twebHttpsPort,
 	httpPort,
 	enableHttpRedirect,
 	useCf,

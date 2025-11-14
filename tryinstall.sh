@@ -113,6 +113,20 @@ run_macos_tryinstall() {
     log "Node OK: $(node -v)"
   fi
 
+  local mac_pnpm_home="${PNPM_HOME:-$HOME/.local/share/pnpm}"
+  if command -v pnpm >/dev/null 2>&1; then
+    log "pnpm OK: $(pnpm -v)"
+  else
+    log "Installing pnpm via official installer"
+    if PNPM_HOME="$mac_pnpm_home" SHELL="${SHELL:-/bin/bash}" bash -lc 'curl -fsSL https://get.pnpm.io/install.sh | sh -'; then
+      export PNPM_HOME="$mac_pnpm_home"
+      PATH="$PNPM_HOME:$PATH"
+      log "pnpm OK: $(pnpm -v 2>/dev/null || echo 'installed')"
+    else
+      warn "pnpm installer failed; run: curl -fsSL https://get.pnpm.io/install.sh | sh -"
+    fi
+  fi
+
   # Java >= 11 (prefer 21)
   local java_major
   java_major="$(mac_java_major)"
@@ -397,6 +411,36 @@ pkg_arch() {
     apt) dpkg --print-architecture ;;
     dnf) uname -m ;;
   esac
+}
+
+ensure_pnpm_for_target_user() {
+  local pnpm_home="${PNPM_HOME:-$TARGET_HOME/.local/share/pnpm}"
+  local shell_path
+  shell_path="$(command -v bash || echo /bin/bash)"
+  if have pnpm; then
+    log "pnpm OK: $(pnpm -v)"
+    return 0
+  fi
+  log "Installing pnpm for ${TARGET_USER} (PNPM_HOME=${pnpm_home})"
+  local installer='curl -fsSL https://get.pnpm.io/install.sh | sh -'
+  if [ "$TARGET_USER" = "root" ]; then
+    if ! env PNPM_HOME="$pnpm_home" SHELL="$shell_path" bash -lc "$installer"; then
+      warn "pnpm installer failed. Run: curl -fsSL https://get.pnpm.io/install.sh | sh -"
+      return 1
+    fi
+  else
+    if ! sudo -u "$TARGET_USER" -H env PNPM_HOME="$pnpm_home" SHELL="$shell_path" bash -lc "$installer"; then
+      warn "pnpm installer failed for $TARGET_USER. Run: sudo -u $TARGET_USER PNPM_HOME=\"$pnpm_home\" $installer"
+      return 1
+    fi
+  fi
+  PATH="$pnpm_home:$PATH"
+  export PNPM_HOME="$pnpm_home"
+  if have pnpm; then
+    log "pnpm OK: $(pnpm -v)"
+  else
+    warn "pnpm command still missing. Ensure \$PNPM_HOME (${pnpm_home}) is on PATH before rerunning."
+  fi
 }
 
 install_first_available_pkg() {
@@ -774,7 +818,12 @@ TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 TARGET_UID="$(id -u "$TARGET_USER")"
 TARGET_GID="$(id -g "$TARGET_USER")"
 PATH="$PATH:$TARGET_HOME/bin:$TARGET_HOME/.local/bin"
-export PATH
+PNPM_HOME_DEFAULT="$TARGET_HOME/.local/share/pnpm"
+if [ -z "${PNPM_HOME:-}" ]; then
+  PNPM_HOME="$PNPM_HOME_DEFAULT"
+fi
+PATH="$PNPM_HOME:$PATH"
+export PATH PNPM_HOME
 
 # ========= Repo cleanup before refresh =========
 prune_docker_repo_if_needed
@@ -904,6 +953,8 @@ if [ "$need_node" -eq 1 ]; then
 else
   log "Node OK: $(node -v)"
 fi
+
+ensure_pnpm_for_target_user
 
 # ========= Docker strategy =========
 if [ "$PKG_MGR" = "apt" ]; then
