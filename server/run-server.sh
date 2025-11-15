@@ -53,6 +53,9 @@ need_cmd() {
 }
 
 start_plain() {
+	if [[ -x "$MODULE_SCRIPT" ]]; then
+		"$MODULE_SCRIPT" teardown --quiet >/dev/null 2>&1 || true
+	fi
 	exec env "${NODE_ENV_VARS[@]}" node "$SERVER_JS" "${FORWARDED_ARGS[@]}"
 }
 
