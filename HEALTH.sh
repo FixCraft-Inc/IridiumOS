@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # IridiumOS build prerequisites health check
 set -euo pipefail
+if [ "${EUID:-$(id -u)}" -eq 0 ]; then
+  echo "[health] Please run as a normal user (not root/sudo)." >&2
+  exit 1
+fi
 
 PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 export PATH
@@ -31,7 +35,7 @@ REQ_NODE_MAJOR_MIN=20
 REQ_JAVA_MIN=11
 REQ_RAM_MB_MIN=3072
 REQ_DISK_MB_MIN=5120
-ESSENTIAL_CMDS=(make git gcc clang node npm pnpm rustup cargo java jq uuidgen wasm-opt inotifywait ip setpriv nft resolvconf)
+ESSENTIAL_CMDS=(make git gcc clang node npm pnpm rustup cargo java jq uuidgen wasm-opt inotifywait ip setpriv nft resolvconf socat)
 OPTIONAL_CMDS=(iptables sysctl wg-quick)
 ALT_CMDS=(wget curl)
 RUST_TARGETS=(wasm32-unknown-unknown i686-unknown-linux-gnu)
@@ -77,7 +81,15 @@ done
 
 # ----------------------------- HELPERS --------------------------------
 json_escape() { jq -Rsa . <<<"$1"; }  # requires jq (checked below)
-have() { PATH="$PATH:/usr/sbin:/sbin" command -v "$1" >/dev/null 2>&1; }
+have() {
+  PATH="$PATH:/usr/sbin:/sbin"
+  local cmd_path
+  cmd_path="$(command -v "$1" 2>/dev/null)" || return 1
+  if [ -x "$cmd_path" ]; then
+    return 0
+  fi
+  return 1
+}
 kv() { printf "%-26s %s\n" "$1" "$2"; }
 humanize_mb() {
   local mb="$1"
@@ -604,7 +616,14 @@ for c in "${ESSENTIAL_CMDS[@]}"; do
 	if have "$c"; then
 		print_line "$(kv "$c" "${PASS} found")"; REPORT["cmd_$c"]="yes"; CORE_OK=$((CORE_OK+1))
 	else
+		if [ "$c" = "pnpm" ] && have npm && npx --yes pnpm --version >/dev/null 2>&1; then
+			print_line "$(kv 'pnpm' "${YEL}▲ shim via npx${RST}")"
+			REPORT["cmd_pnpm"]="shim"
+			CORE_OK=$((CORE_OK+1))
+			continue
+		fi
 		print_line "$(kv "$c" "${FAIL} missing")"; REPORT["cmd_$c"]="no"; MISSING+=("$c"); CORE_MISSING+=("$c")
+		add_fail
 		case "$c" in
 			ip)
 				FIXHINTS+=("Install iproute2 (provides the ip command). Debian/Ubuntu: sudo apt install iproute2; Fedora: sudo dnf install iproute")
@@ -620,6 +639,9 @@ for c in "${ESSENTIAL_CMDS[@]}"; do
 				;;
 			resolvconf)
 				FIXHINTS+=("Install resolvconf/openresolv so wg-quick can push DNS. Debian/Ubuntu: sudo apt install resolvconf; Fedora: sudo dnf install openresolv")
+				;;
+			socat)
+				FIXHINTS+=("Install socat (used for host↔sandbox port forwarding). Debian/Ubuntu: sudo apt install socat; Fedora: sudo dnf install socat")
 				;;
 		esac
 	fi
@@ -795,15 +817,15 @@ if [ "$HUMAN_MODE" -eq 0 ]; then
     echo "${YEL}Hints:${RST}"
     for h in "${FIXHINTS[@]}"; do echo "  - $h"; done
   fi
-  if [ "$overall_rc" -eq 0 ]; then
-    if [ "$MODE" = "LIMITED" ]; then
-      echo "${PASS} All essential checks passed (LIMITED mode - kernel-dependent features skipped). Ready to build."
-    else
-      echo "${PASS} All essential checks passed. Ready to build."
-    fi
-  else
-    echo "${FAIL} Some essential checks failed. See above."
-  fi
+ if [ "$overall_rc" -eq 0 ]; then
+   if [ "$MODE" = "LIMITED" ]; then
+     echo "${PASS} All essential checks passed (LIMITED mode - kernel-dependent features skipped). Ready to build."
+   else
+     echo "${PASS} All essential checks passed. Ready to build."
+   fi
+ else
+   echo "${FAIL} Some essential checks failed. See above."
+ fi
 fi
 
 if [ "$HUMAN_MODE" -eq 1 ]; then

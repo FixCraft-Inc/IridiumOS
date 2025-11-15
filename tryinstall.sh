@@ -858,9 +858,9 @@ ensure_pkgs "${CORE_PKGS[@]}"
 
 log "Network sandbox deps (iptables, procps/sysctl, wireguard-tools/wg-quick)"
 if [ "$PKG_MGR" = "apt" ]; then
-  NETNS_PKGS=(iptables procps wireguard-tools nftables resolvconf)
+  NETNS_PKGS=(iptables procps wireguard-tools nftables resolvconf socat)
 else
-  NETNS_PKGS=(iptables procps-ng wireguard-tools nftables openresolv)
+  NETNS_PKGS=(iptables procps-ng wireguard-tools nftables openresolv socat)
 fi
 if [ "$MODE" = "FULL" ]; then
   ensure_pkgs "${NETNS_PKGS[@]}"
@@ -868,6 +868,19 @@ else
   log "LIMITED mode: best-effort install of network sandbox deps so containers that allow it still get them"
   ensure_optional_pkgs "${NETNS_PKGS[@]}"
 fi
+
+ensure_socat_permissions() {
+  if command -v socat >/dev/null 2>&1; then
+    local socat_path
+    socat_path="$(command -v socat)"
+    if [ ! -x "$socat_path" ]; then
+      log "Fixing socat permissions at $socat_path"
+      $SUDO chmod 755 "$socat_path" >/dev/null 2>&1 || warn "Unable to chmod socat; run 'sudo chmod 755 $socat_path'"
+    fi
+  fi
+}
+
+ensure_socat_permissions
 
 # ========= Java (>=11; prefer 21) =========
 if [ "$PKG_MGR" = "apt" ]; then

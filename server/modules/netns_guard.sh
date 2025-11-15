@@ -15,6 +15,9 @@ DEFAULT_WG_SENTINEL="__AUTO_WG__"
 DEFAULT_WG_PATH="$SECRETS_DIR/wg0.conf"
 RESOLVCONF_CMD_CACHE=""
 RESOLVCONF_FALLBACK="/bin/true"
+RESOLVCONF_DISABLE_SENTINEL="$CONFIG_DIR/.resolvconf_disabled"
+SOCAT_PIDS_DIR="$STATE_DIR/socat"
+SOCAT_PATH_CACHE=""
 
 read -r -d '' DEFAULT_CONFIG <<'JSON' || true
 {
@@ -116,7 +119,70 @@ log_error() {
 	printf '[netns][err] %s\n' "$*" >&2
 }
 
+stop_socat_proxies() {
+	if [[ ! -d "$SOCAT_PIDS_DIR" ]]; then
+		return
+	fi
+	while IFS= read -r pidfile; do
+		[[ -z "$pidfile" ]] && continue
+		[[ -f "$pidfile" ]] || continue
+		if pid="$(cat "$pidfile" 2>/dev/null)"; then
+			if kill -0 "$pid" >/dev/null 2>&1; then
+				kill "$pid" >/dev/null 2>&1 || true
+			fi
+		fi
+		rm -f "$pidfile" >/dev/null 2>&1 || true
+	done < <(find "$SOCAT_PIDS_DIR" -maxdepth 1 -name '*.pid' -print 2>/dev/null)
+	rmdir "$SOCAT_PIDS_DIR" >/dev/null 2>&1 || true
+}
+
+ensure_socat_available() {
+	if [[ -n "$SOCAT_PATH_CACHE" && -x "$SOCAT_PATH_CACHE" ]]; then
+		return 0
+	fi
+	SOCAT_PATH_CACHE="$(command -v socat 2>/dev/null || true)"
+	if [[ -z "$SOCAT_PATH_CACHE" ]]; then
+		log_warn "[netns] socat not found; host-level port forwarding disabled."
+		return 1
+	fi
+	if [[ ! -x "$SOCAT_PATH_CACHE" ]]; then
+		chmod 755 "$SOCAT_PATH_CACHE" >/dev/null 2>&1 || true
+	fi
+	if [[ ! -x "$SOCAT_PATH_CACHE" ]]; then
+		log_error "[netns] socat present at $SOCAT_PATH_CACHE but not executable. Fix permissions."
+		return 1
+	fi
+	return 0
+}
+
+start_socat_proxy() {
+	local listen_port="$1"
+	local target_ip="$2"
+	local target_port="$3"
+	if ! ensure_socat_available; then
+		return
+	fi
+	mkdir -p "$SOCAT_PIDS_DIR"
+	local pidfile="$SOCAT_PIDS_DIR/${listen_port}.pid"
+	if [[ -f "$pidfile" ]]; then
+		if pid="$(cat "$pidfile" 2>/dev/null)"; then
+			if kill -0 "$pid" >/dev/null 2>&1; then
+				kill "$pid" >/dev/null 2>&1 || true
+			fi
+		fi
+		rm -f "$pidfile" >/dev/null 2>&1 || true
+	fi
+	nohup "$SOCAT_PATH_CACHE" TCP-LISTEN:"$listen_port",reuseaddr,fork TCP:"$target_ip":"$target_port" >/dev/null 2>&1 &
+	echo $! >"$pidfile"
+}
+
 test_resolvconf_support() {
+	if [[ -n "${IR_DISABLE_RESOLVCONF:-}" ]]; then
+		return 1
+	fi
+	if [[ -f "$RESOLVCONF_DISABLE_SENTINEL" ]]; then
+		return 1
+	fi
 	local tmp_if="wgtest-$RANDOM"
 	if ! command -v resolvconf >/dev/null 2>&1; then
 		return 1
@@ -135,6 +201,11 @@ determine_resolvconf_cmd() {
 	fi
 	if [[ -n "${IR_RESOLVCONF_CMD:-}" ]]; then
 		RESOLVCONF_CMD_CACHE="$IR_RESOLVCONF_CMD"
+		printf '%s\n' "$RESOLVCONF_CMD_CACHE"
+		return
+	fi
+	if [[ -f "$RESOLVCONF_DISABLE_SENTINEL" ]]; then
+		RESOLVCONF_CMD_CACHE="$RESOLVCONF_FALLBACK"
 		printf '%s\n' "$RESOLVCONF_CMD_CACHE"
 		return
 	fi
@@ -361,11 +432,42 @@ wireguard_up() {
 	if [[ -n "$userspace" ]]; then
 		log_info "Starting WireGuard (userspace: $userspace)"
 		env_args+=("WG_QUICK_USERSPACE_IMPLEMENTATION=$userspace")
-		ip netns exec "$ns" env "${env_args[@]}" wg-quick up "$resolved" >/dev/null
+		if ! ip netns exec "$ns" env "${env_args[@]}" wg-quick up "$resolved" >/dev/null; then
+			handle_wireguard_up_failure "$ns" "$resolved" "$userspace" || true
+			return
+		fi
 	else
 		log_info "Starting WireGuard"
-		ip netns exec "$ns" env "${env_args[@]}" wg-quick up "$resolved" >/dev/null
+		if ! ip netns exec "$ns" env "${env_args[@]}" wg-quick up "$resolved" >/dev/null; then
+			handle_wireguard_up_failure "$ns" "$resolved" || true
+			return
+		fi
 	fi
+}
+
+handle_wireguard_up_failure() {
+	local ns="$1"
+	local resolved="$2"
+	local userspace="${3:-}"
+	if [[ "$RESOLVCONF_CMD_CACHE" == "$RESOLVCONF_FALLBACK" ]]; then
+		log_error "WireGuard failed to start even after disabling DNS updates. Check wg0.conf."
+		return 1
+	fi
+	log_warn "WireGuard bring-up failed (likely due to resolvconf). Retrying without DNS updates."
+	RESOLVCONF_CMD_CACHE="$RESOLVCONF_FALLBACK"
+	mkdir -p "$CONFIG_DIR"
+	touch "$RESOLVCONF_DISABLE_SENTINEL" >/dev/null 2>&1 || true
+	local retry_cmd=(RESOLVCONF="$RESOLVCONF_CMD_CACHE")
+	wireguard_down "$ns" "$resolved"
+	if [[ -n "$userspace" ]]; then
+		retry_cmd+=("WG_QUICK_USERSPACE_IMPLEMENTATION=$userspace")
+	fi
+	if ip netns exec "$ns" env "${retry_cmd[@]}" wg-quick up "$resolved" >/dev/null; then
+		log_info "WireGuard started without resolvconf integration."
+		return 0
+	fi
+	log_error "WireGuard failed to start even after resolvconf fallback."
+	return 1
 }
 
 netns_exists() {
@@ -425,15 +527,34 @@ apply_firewall() {
 	ensure_rule filter FORWARD "$RULE_COMMENT" -i "$host_if" -o "$uplink" -j ACCEPT
 
 	ensure_rule nat PREROUTING "$RULE_COMMENT" -i "$uplink" -p tcp --dport "$https_port" -j DNAT --to-destination "${ns_ip}:${https_port}"
-	ensure_rule nat OUTPUT "$RULE_COMMENT" -o lo -p tcp --dport "$https_port" -j DNAT --to-destination "${ns_ip}:${https_port}"
+	ensure_rule nat OUTPUT "$RULE_COMMENT" -p tcp --dport "$https_port" -j DNAT --to-destination "${ns_ip}:${https_port}"
 	if [[ -n "$tweb_port" && "$tweb_port" != "null" && "$tweb_port" != "$https_port" ]]; then
 		ensure_rule nat PREROUTING "$RULE_COMMENT" -i "$uplink" -p tcp --dport "$tweb_port" -j DNAT --to-destination "${ns_ip}:${tweb_port}"
-		ensure_rule nat OUTPUT "$RULE_COMMENT" -o lo -p tcp --dport "$tweb_port" -j DNAT --to-destination "${ns_ip}:${tweb_port}"
+		ensure_rule nat OUTPUT "$RULE_COMMENT" -p tcp --dport "$tweb_port" -j DNAT --to-destination "${ns_ip}:${tweb_port}"
 	fi
 
 	if [[ "$expose_http" == "true" ]]; then
 		ensure_rule nat PREROUTING "$RULE_COMMENT" -i "$uplink" -p tcp --dport "$http_port" -j DNAT --to-destination "${ns_ip}:${http_port}"
-		ensure_rule nat OUTPUT "$RULE_COMMENT" -o lo -p tcp --dport "$http_port" -j DNAT --to-destination "${ns_ip}:${http_port}"
+		ensure_rule nat OUTPUT "$RULE_COMMENT" -p tcp --dport "$http_port" -j DNAT --to-destination "${ns_ip}:${http_port}"
+	fi
+}
+
+start_socat_proxies() {
+	local ns_ip="$1"
+	local https_port="$2"
+	local tweb_port="$3"
+	local http_port="$4"
+	local expose_http="$5"
+	stop_socat_proxies
+	if ! ensure_socat_available; then
+		return
+	fi
+	start_socat_proxy "$https_port" "$ns_ip" "$https_port"
+	if [[ -n "$tweb_port" && "$tweb_port" != "$https_port" ]]; then
+		start_socat_proxy "$tweb_port" "$ns_ip" "$tweb_port"
+	fi
+	if [[ "$expose_http" == "true" ]]; then
+		start_socat_proxy "$http_port" "$ns_ip" "$http_port"
 	fi
 }
 
@@ -477,6 +598,7 @@ ensure_stack() {
 
 	setup_namespace "$ns" "$host_if" "$ns_if" "$host_addr" "$ns_addr" "$gateway"
 	apply_firewall "$cidr" "$uplink" "$host_if" "$ns_ip_plain" "$RESOLVED_HTTPS_PORT" "$RESOLVED_HTTP_PORT" "$RESOLVED_HTTP_ALLOWED" "$RESOLVED_TWEB_HTTPS_PORT"
+	start_socat_proxies "$ns_ip_plain" "$RESOLVED_HTTPS_PORT" "$RESOLVED_TWEB_HTTPS_PORT" "$RESOLVED_HTTP_PORT" "$RESOLVED_HTTP_ALLOWED"
 
 	local vpn_enabled vpn_config vpn_impl
 	vpn_enabled="$(cfg_raw '.vpn.enabled')"
@@ -507,6 +629,7 @@ teardown_stack() {
 	fi
 
 	cleanup_firewall_rules
+	stop_socat_proxies
 
 	if ip link show "$host_if" >/dev/null 2>&1; then
 		ip link delete "$host_if" >/dev/null 2>&1 || true

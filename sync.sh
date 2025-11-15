@@ -7,7 +7,7 @@ set -euo pipefail
 : "${ALLOWED_SIGNERS:=}"                       # optional: ~/.config/git/allowed_signers for local G trust
 : "${BACKUP_DIR:=../BACKir}"
 
-MSG="${1:-Auto-commit $(date +'%Y-%m-%d %H:%M:%S')}"
+MSG="${1:-Author SYNC $(date +'%Y-%m-%d %H:%M:%S')}"
 
 log(){ printf "%s\n" "$*"; }
 
