@@ -139,6 +139,39 @@ console.log(
 
 let consoleInterface = null;
 let consoleClosing = false;
+let consoleShimInstalled = false;
+const consoleShimMethods = ["log", "warn", "error"];
+
+function refreshConsolePrompt() {
+	if (
+		!interactiveConsoleEnabled ||
+		!consoleInterface ||
+		consoleClosing ||
+		shutdownController?.isShuttingDown?.()
+	) {
+		return;
+	}
+	try {
+		consoleInterface.prompt(true);
+	} catch {
+		// ignore prompt refresh errors
+	}
+}
+
+function installConsolePromptShim() {
+	if (consoleShimInstalled || !interactiveConsoleEnabled) {
+		return;
+	}
+	consoleShimInstalled = true;
+	for (const method of consoleShimMethods) {
+		const original = console[method];
+		if (typeof original !== "function") continue;
+		console[method] = (...args) => {
+			original(...args);
+			refreshConsolePrompt();
+		};
+	}
+}
 
 function generateCookieSecret() {
 	return crypto.randomBytes(32).toString("base64url");
@@ -2166,6 +2199,8 @@ function ensureInteractiveConsoleReady() {
 		},
 		shouldContinue: () => !shutdownController.isShuttingDown(),
 	});
+	installConsolePromptShim();
+	refreshConsolePrompt();
 }
 
 function closeConsoleInterface() {

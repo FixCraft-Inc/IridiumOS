@@ -858,9 +858,9 @@ ensure_pkgs "${CORE_PKGS[@]}"
 
 log "Network sandbox deps (iptables, procps/sysctl, wireguard-tools/wg-quick)"
 if [ "$PKG_MGR" = "apt" ]; then
-  NETNS_PKGS=(iptables procps wireguard-tools)
+  NETNS_PKGS=(iptables procps wireguard-tools nftables resolvconf)
 else
-  NETNS_PKGS=(iptables procps-ng wireguard-tools)
+  NETNS_PKGS=(iptables procps-ng wireguard-tools nftables openresolv)
 fi
 if [ "$MODE" = "FULL" ]; then
   ensure_pkgs "${NETNS_PKGS[@]}"

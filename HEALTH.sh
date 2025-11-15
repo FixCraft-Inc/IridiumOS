@@ -31,7 +31,7 @@ REQ_NODE_MAJOR_MIN=20
 REQ_JAVA_MIN=11
 REQ_RAM_MB_MIN=3072
 REQ_DISK_MB_MIN=5120
-ESSENTIAL_CMDS=(make git gcc clang node npm pnpm rustup cargo java jq uuidgen wasm-opt inotifywait ip setpriv)
+ESSENTIAL_CMDS=(make git gcc clang node npm pnpm rustup cargo java jq uuidgen wasm-opt inotifywait ip setpriv nft resolvconf)
 OPTIONAL_CMDS=(iptables sysctl wg-quick)
 ALT_CMDS=(wget curl)
 RUST_TARGETS=(wasm32-unknown-unknown i686-unknown-linux-gnu)
@@ -614,6 +614,12 @@ for c in "${ESSENTIAL_CMDS[@]}"; do
 				;;
 			pnpm)
 				FIXHINTS+=("Install pnpm via the official installer: curl -fsSL https://get.pnpm.io/install.sh | sh - (make sure \$PNPM_HOME is on PATH).")
+				;;
+			nft)
+				FIXHINTS+=("Install nftables (provides nft). Debian/Ubuntu: sudo apt install nftables; Fedora: sudo dnf install nftables")
+				;;
+			resolvconf)
+				FIXHINTS+=("Install resolvconf/openresolv so wg-quick can push DNS. Debian/Ubuntu: sudo apt install resolvconf; Fedora: sudo dnf install openresolv")
 				;;
 		esac
 	fi

@@ -13,8 +13,10 @@ RULE_COMMENT="IRIDIUM-NETNS"
 RUNTIME_PORT_SCRIPT="$SERVER_DIR/runtime-ports.mjs"
 DEFAULT_WG_SENTINEL="__AUTO_WG__"
 DEFAULT_WG_PATH="$SECRETS_DIR/wg0.conf"
+RESOLVCONF_CMD_CACHE=""
+RESOLVCONF_FALLBACK="/bin/true"
 
-read -r -d '' DEFAULT_CONFIG <<'JSON'
+read -r -d '' DEFAULT_CONFIG <<'JSON' || true
 {
 	"enabled": false,
 	"namespace": "iridium-srv",
@@ -114,6 +116,38 @@ log_error() {
 	printf '[netns][err] %s\n' "$*" >&2
 }
 
+test_resolvconf_support() {
+	local tmp_if="wgtest-$RANDOM"
+	if ! command -v resolvconf >/dev/null 2>&1; then
+		return 1
+	fi
+	if printf 'nameserver 127.0.0.1\n' | resolvconf -a "$tmp_if" >/dev/null 2>&1; then
+		resolvconf -d "$tmp_if" >/dev/null 2>&1 || true
+		return 0
+	fi
+	return 1
+}
+
+determine_resolvconf_cmd() {
+	if [[ -n "$RESOLVCONF_CMD_CACHE" ]]; then
+		printf '%s\n' "$RESOLVCONF_CMD_CACHE"
+		return
+	fi
+	if [[ -n "${IR_RESOLVCONF_CMD:-}" ]]; then
+		RESOLVCONF_CMD_CACHE="$IR_RESOLVCONF_CMD"
+		printf '%s\n' "$RESOLVCONF_CMD_CACHE"
+		return
+	fi
+	if test_resolvconf_support; then
+		RESOLVCONF_CMD_CACHE="$(command -v resolvconf)"
+		printf '%s\n' "$RESOLVCONF_CMD_CACHE"
+		return
+	fi
+	log_warn "[netns] resolvconf unavailable or failing; WireGuard DNS updates disabled."
+	RESOLVCONF_CMD_CACHE="$RESOLVCONF_FALLBACK"
+	printf '%s\n' "$RESOLVCONF_CMD_CACHE"
+}
+
 cfg_raw() {
 	jq -r "$1" "$CONFIG_FILE"
 }
@@ -168,6 +202,14 @@ pretty_bool() {
 	else
 		printf '❌'
 	fi
+}
+
+pretty_bool_unknown() {
+	case "$1" in
+		true) printf '✅' ;;
+		false) printf '❌' ;;
+		*) printf '❔' ;;
+	esac
 }
 
 strip_mask() {
@@ -290,8 +332,10 @@ wireguard_down() {
 	fi
 	local iface
 	iface="$(wg_interface_name "$resolved")"
+	local resolvconf_cmd
+	resolvconf_cmd="$(determine_resolvconf_cmd)"
 	if ip netns exec "$ns" ip link show "$iface" >/dev/null 2>&1; then
-		ip netns exec "$ns" wg-quick down "$resolved" >/dev/null 2>&1 || true
+		ip netns exec "$ns" env RESOLVCONF="$resolvconf_cmd" wg-quick down "$resolved" >/dev/null 2>&1 || true
 	fi
 }
 
@@ -311,12 +355,16 @@ wireguard_up() {
 	fi
 	need_cmd wg-quick
 	wireguard_down "$ns" "$resolved"
+	local resolvconf_cmd
+	resolvconf_cmd="$(determine_resolvconf_cmd)"
+	local env_args=(RESOLVCONF="$resolvconf_cmd")
 	if [[ -n "$userspace" ]]; then
 		log_info "Starting WireGuard (userspace: $userspace)"
-		ip netns exec "$ns" env WG_QUICK_USERSPACE_IMPLEMENTATION="$userspace" wg-quick up "$resolved" >/dev/null
+		env_args+=("WG_QUICK_USERSPACE_IMPLEMENTATION=$userspace")
+		ip netns exec "$ns" env "${env_args[@]}" wg-quick up "$resolved" >/dev/null
 	else
 		log_info "Starting WireGuard"
-		ip netns exec "$ns" wg-quick up "$resolved" >/dev/null
+		ip netns exec "$ns" env "${env_args[@]}" wg-quick up "$resolved" >/dev/null
 	fi
 }
 
@@ -826,6 +874,11 @@ cmd_status() {
 	status_report
 }
 
+cmd_init_config() {
+	ensure_config_file
+	echo "[netns] Config initialized at $CONFIG_FILE"
+}
+
 COMMAND="${1:-interactive}"
 if [[ $# -gt 0 ]]; then
 	shift
@@ -844,15 +897,11 @@ case "$COMMAND" in
 	status)
 		cmd_status "$@"
 		;;
+	init-config)
+		cmd_init_config "$@"
+		;;
 	*)
-		echo "Usage: $0 [interactive|ensure|teardown|status]" >&2
+		echo "Usage: $0 [interactive|ensure|teardown|status|init-config]" >&2
 		exit 1
 		;;
 esac
-pretty_bool_unknown() {
-	case "$1" in
-		true) printf '✅' ;;
-		false) printf '❌' ;;
-		*) printf '❔' ;;
-	esac
-}

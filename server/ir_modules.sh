@@ -23,6 +23,7 @@ GREEN="$(printf '\033[38;5;34m')"
 RED="$(printf '\033[31m')"
 YELLOW="$(printf '\033[33m')"
 CYAN="$(printf '\033[36m')"
+RUNTIME_LOG="$SCRIPT_DIR/runtime.log"
 
 status_badge() {
 	local state="${1:-unknown}"
@@ -106,7 +107,12 @@ unset_env_var() {
 get_env_var() {
 	local key="$1"
 	[ -f "$ENV_FILE" ] || return 0
-	grep -E "^${key}=" "$ENV_FILE" | tail -n1 | cut -d= -f2-
+	local line
+	line="$(grep -E "^${key}=" "$ENV_FILE" 2>/dev/null | tail -n1 || true)"
+	if [ -z "$line" ]; then
+		return 0
+	fi
+	printf '%s\n' "${line#*=}"
 }
 
 trim_spaces() {
@@ -167,6 +173,32 @@ env_bool() {
 
 dns_mode_use_cf() {
 	env_bool "USE_CF" "true"
+}
+
+clear_screen() {
+	if command -v clear >/dev/null 2>&1; then
+		clear
+	else
+		printf '\033c'
+	fi
+}
+
+menu_header() {
+	local title="$1"
+	clear_screen
+	echo "----------"
+	echo -e "$title"
+	echo "----------"
+}
+
+menu_footer() {
+	echo "----------"
+}
+
+log_runtime() {
+	local ts
+	ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+	printf '[%s] %s\n' "$ts" "$*" >>"$RUNTIME_LOG" 2>/dev/null || true
 }
 
 dns_default_https_port() {
@@ -277,8 +309,7 @@ dns_menu() {
 		redirect="$(dns_redirect_enabled)"
 		main_hosts_raw="$(get_env_var "MAIN_HOSTS")"
 		tweb_hosts_raw="$(get_env_var "TWEB_HOSTS")"
-		echo
-		echo -e "${BOLD}🌐 DNS & Origins${RST}"
+		menu_header "${BOLD}🌐 DNS & Origins${RST}"
 		echo "   Mode: $mode_label"
 		echo "   Main HTTPS: 🔒 $main_port | Telegram HTTPS: 💬 $tweb_port"
 		echo "   HTTP redirect: $(status_badge "$redirect") (port $http_port)"
@@ -292,7 +323,7 @@ dns_menu() {
   4) Edit Telegram host allowlist
   5) ↩️ Back
 EOF
-		echo
+		menu_footer
 		read -rp "Select an option: " choice
 		case "$choice" in
 			1)
@@ -348,7 +379,7 @@ enable_vpn_detection() {
 	if [ -z "$slug" ] || [ -z "$branch" ]; then
 		echo "[VPN] Unable to determine repository slug or branch."
 		return 1
-	}
+	fi
 	raw_url="https://raw.githubusercontent.com/${slug}/${branch}/server/${VPN_HTML}"
 	echo "[VPN] Fetching HTML template from ${raw_url}"
 	curl -fsSL "$raw_url" -o "$VPN_HTML"
@@ -450,16 +481,59 @@ wireguard_config_ready() {
 run_netns_guard() {
 	if [ ! -x "$MODULE_SCRIPT" ]; then
 		echo "[Sandbox] modules/netns_guard.sh is missing or not executable."
+		log_runtime "modules/netns_guard.sh missing or not executable"
 		return 1
 	fi
+	local status
 	if (( EUID == 0 )); then
 		"$MODULE_SCRIPT" "$@"
+		status=$?
 	elif command -v sudo >/dev/null 2>&1; then
-		sudo "$MODULE_SCRIPT" "$@"
+		sudo -E "$MODULE_SCRIPT" "$@"
+		status=$?
 	else
 		echo "[Sandbox] Root privileges are required for this action."
+		log_runtime "sudo unavailable for netns_guard $*"
 		return 1
 	fi
+	if [ "$status" -ne 0 ]; then
+		log_runtime "netns_guard command '$*' failed with status $status"
+	else
+		log_runtime "netns_guard command '$*' succeeded"
+	fi
+	return "$status"
+}
+
+ensure_sandbox_config_ready() {
+	if [ -f "$NETNS_CONFIG_FILE" ]; then
+		return 0
+	fi
+	echo "[Sandbox] No namespace config found; generating defaults..."
+	log_runtime "Attempting to initialize sandbox config via netns_guard init-config"
+	if run_netns_guard init-config >>"$RUNTIME_LOG" 2>&1; then
+		log_runtime "Sandbox config created at $NETNS_CONFIG_FILE"
+		return 0
+	fi
+	echo "[Sandbox] Failed to initialize sandbox config. Use option 5 for manual setup."
+	log_runtime "Initial sandbox config creation failed"
+	return 1
+}
+
+move_tmp_into_config() {
+	local tmp_file="$1"
+	if mv "$tmp_file" "$NETNS_CONFIG_FILE" 2>/dev/null; then
+		return 0
+	fi
+	if command -v sudo >/dev/null 2>&1; then
+		if sudo mv "$tmp_file" "$NETNS_CONFIG_FILE" 2>/dev/null; then
+			local target_owner="${SUDO_USER:-$(id -un)}"
+			if [ -n "$target_owner" ]; then
+				sudo chown "$target_owner":"$target_owner" "$NETNS_CONFIG_FILE" >/dev/null 2>&1 || true
+			fi
+			return 0
+		fi
+	fi
+	return 1
 }
 
 update_netns_config_bool() {
@@ -469,19 +543,83 @@ update_netns_config_bool() {
 		echo "[Sandbox] jq is required. Run tryinstall.sh first."
 		return 1
 	fi
-	if [ ! -f "$NETNS_CONFIG_FILE" ]; then
-		echo "[Sandbox] Sandbox config is missing. Launch option 5 to initialize it."
+	if ! ensure_sandbox_config_ready; then
 		return 1
 	fi
 	local tmp
 	tmp="$(mktemp)"
 	if jq "$key = $value" "$NETNS_CONFIG_FILE" >"$tmp"; then
-		mv "$tmp" "$NETNS_CONFIG_FILE"
-		return 0
+		if move_tmp_into_config "$tmp"; then
+			return 0
+		fi
 	fi
 	rm -f "$tmp"
-	echo "[Sandbox] Failed to update the config file."
+	echo "[Sandbox] Failed to update the config file (see runtime.log)."
 	return 1
+}
+
+update_netns_config_string() {
+	local key="$1"
+	local value="$2"
+	if ! command -v jq >/dev/null 2>&1; then
+		echo "[Sandbox] jq is required. Run tryinstall.sh first."
+		return 1
+	fi
+	if ! ensure_sandbox_config_ready; then
+		return 1
+	fi
+	local tmp
+	tmp="$(mktemp)"
+	if jq --arg v "$value" "$key = \$v" "$NETNS_CONFIG_FILE" >"$tmp"; then
+		if move_tmp_into_config "$tmp"; then
+			return 0
+		fi
+	fi
+	rm -f "$tmp"
+	echo "[Sandbox] Failed to update the config file (see runtime.log)."
+	return 1
+}
+
+update_netns_config_number() {
+	local key="$1"
+	local value="$2"
+	if ! command -v jq >/dev/null 2>&1; then
+		echo "[Sandbox] jq is required. Run tryinstall.sh first."
+		return 1
+	fi
+	if ! ensure_sandbox_config_ready; then
+		return 1
+	fi
+	local tmp
+	tmp="$(mktemp)"
+	if jq "$key = ($value)" "$NETNS_CONFIG_FILE" >"$tmp"; then
+		if move_tmp_into_config "$tmp"; then
+			return 0
+		fi
+	fi
+	rm -f "$tmp"
+	echo "[Sandbox] Failed to update the config file (see runtime.log)."
+	return 1
+}
+
+auto_wireguard_setup() {
+	if ! ensure_sandbox_config_ready; then
+		return
+	fi
+	if [ "$(wireguard_enabled)" != "true" ]; then
+		log_runtime "Auto-enabling WireGuard in sandbox config"
+		update_netns_config_bool '.vpn.enabled' true || return
+	fi
+	local path
+	path="$(wireguard_config_path)"
+	if [ -z "$path" ]; then
+		path="$DEFAULT_WG_PATH"
+		update_netns_config_string '.vpn.configPath' "$path" || true
+	fi
+	if [ ! -f "$path" ]; then
+		log_runtime "WireGuard config missing; generating stub at $path"
+		ensure_wireguard_stub
+	fi
 }
 
 toggle_sandbox_stack() {
@@ -490,18 +628,24 @@ toggle_sandbox_stack() {
 	if [ "$current" = "true" ]; then
 		echo "[Sandbox] Disabling namespace + firewall..."
 		if update_netns_config_bool '.enabled' false; then
-			run_netns_guard teardown --quiet || true
-			echo "[Sandbox] Namespace disabled."
+			if run_netns_guard teardown --quiet; then
+				echo "[Sandbox] Namespace disabled."
+			else
+				echo "[Sandbox] Failed to tear down namespace cleanly."
+			fi
 		fi
 	else
 		echo "[Sandbox] Enabling namespace + firewall..."
-		if [ ! -f "$NETNS_CONFIG_FILE" ]; then
-			echo "[Sandbox] Config missing; attempting to bootstrap defaults."
-			run_netns_guard ensure --quiet || true
+		if ! ensure_sandbox_config_ready; then
+			return
 		fi
+		auto_wireguard_setup
 		if update_netns_config_bool '.enabled' true; then
-			run_netns_guard ensure --quiet || true
-			echo "[Sandbox] Namespace enabled."
+			if run_netns_guard ensure --quiet; then
+				echo "[Sandbox] Namespace enabled."
+			else
+				echo "[Sandbox] Failed to apply namespace settings. Try option 5 for manual repair."
+			fi
 		fi
 	fi
 }
@@ -554,15 +698,14 @@ modules_menu() {
 	while true; do
 		local telegram_state
 		telegram_state="$(is_telegram_installed)"
-		echo
-		echo -e "${BOLD}💬 Telegram Web Module${RST}"
+		menu_header "${BOLD}💬 Telegram Web Module${RST}"
 		echo "   Status: $(status_badge "$telegram_state")"
 		echo
 		cat <<'EOF'
   1) Toggle Telegram Web (install/uninstall)
   2) Back
 EOF
-		echo
+		menu_footer
 		read -rp "Select an option: " choice
 		case "$choice" in
 			1)
@@ -587,8 +730,7 @@ security_menu() {
 		wg_state="$(wireguard_config_ready)"
 		wg_enabled_state="$(wireguard_enabled)"
 		wg_path="$(wireguard_config_path)"
-		echo
-		echo -e "${BOLD}🛡️  FixCraft Security Suite${RST}"
+		menu_header "${BOLD}🛡️  FixCraft Security Suite${RST}"
 		echo "   VPN detection:        $(status_badge "$vpn_state")"
 		echo "   Sandbox firewall:     $(status_badge "$sandbox_state")"
 		echo "   WireGuard tunnel:     $(status_badge "$wg_enabled_state")"
@@ -602,7 +744,7 @@ security_menu() {
   5) 🧊 Server namespace + WireGuard toolkit
   6) ↩️ Back
 EOF
-		echo
+		menu_footer
 		read -rp "Select an option: " choice
 		case "$choice" in
 			1)
@@ -618,11 +760,30 @@ EOF
 				pause
 				;;
 			4)
-				run_netns_guard status || true
+				if ensure_sandbox_config_ready; then
+					run_netns_guard status || true
+				else
+					echo "[Sandbox] Cannot inspect status without a valid config. Use option 5."
+				fi
 				pause
 				;;
 			5)
-				run_netns_guard interactive || true
+				echo "[Sandbox] Launching advanced toolkit..."
+				set +e
+				run_netns_guard interactive
+				exit_code=$?
+				set -e
+				if [ "$exit_code" -ne 0 ]; then
+					log_runtime "netns_guard interactive exited with status $exit_code"
+				fi
+				if [ "$exit_code" -eq 0 ]; then
+					echo "[Sandbox] Toolkit closed."
+				elif [ "$exit_code" -eq 130 ]; then
+					echo "[Sandbox] Toolkit interrupted."
+				else
+					echo "[Sandbox] Toolkit exited with status $exit_code."
+				fi
+				pause
 				;;
 			6)
 				return
@@ -635,14 +796,12 @@ EOF
 }
 
 main_menu() {
-	echo -e "${BOLD}💘 FixCraft Module Switchboard${RST}"
-	echo "👉👈 Pick a vibe to toggle."
 	while true; do
 		local telegram_state vpn_state sandbox_state
 		telegram_state="$(is_telegram_installed)"
 		vpn_state="$(vpn_detection_enabled)"
 		sandbox_state="$(sandbox_enabled)"
-		echo
+		menu_header "${BOLD}💘 FixCraft Module Switchboard${RST}\n👉👈 Pick a vibe to toggle."
 		echo -e "${CYAN}✨ Manage Modules${RST}"
 		echo "  1) 💬 Telegram Web: $(status_badge "$telegram_state")"
 		echo
@@ -655,7 +814,7 @@ main_menu() {
 		echo "     Sandbox:       $(status_badge "$sandbox_state")"
 		echo
 		echo "  4) ↩️ Exit"
-		echo
+		menu_footer
 		read -rp "Select a category: " choice
 		case "$choice" in
 			1) modules_menu ;;
