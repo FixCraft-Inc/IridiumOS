@@ -20,6 +20,7 @@ IridiumOS shows as more of a proof‑of‑concept with what's possible on the mo
 ## Security & UX improvements over upstream AnuraOS
 
 - **Origin hardening:** Cloudflare-aware TLS bootstrap, automatic certificate selection (Cloudflare origin vs. native `fullchain.pem`/`privkey.pem`), and zero-tolerance direct-IP blocking with a friendly “Firewall‑chan” page keep the server reachable only through approved hostnames.
+- **Cloudflare tunnel mode:** Set `CF_TUNNEL_MODE=true` to run `server.js` on a Unix domain socket (with a loopback HTTP fallback) tailored for `cloudflared`, so no WAN ports are required and the namespace automatically skips DNAT exposure.
 - **Runtime safeguards:** Local DDoS guard, tight HTTP/HTTPS timeouts, privilege dropping after binding privileged ports, and optional HTTP→HTTPS forwarding make it harder to knock over the origin even when Cloudflare is disabled.
 - **Namespace sandbox module:** A configurable ir_module (with a friendly emoji UI) can pin `server.js` inside a dedicated network namespace, optionally light up WireGuard inside that namespace, and still expose only HTTPS/HTTP-forwarded traffic to the WAN. See [documentation/server-sandbox.md](documentation/server-sandbox.md).
 - **Human verification everywhere:** Turnstile secrets/site keys now live in `.env` (and are required whenever `USE_CF=true`). The login page consumes these values dynamically and can optionally inject Google Tag Manager IDs without embedding secrets in the static HTML.

@@ -106,6 +106,14 @@ if ! ip netns list 2>/dev/null | awk '{print $1}' | grep -qw "$NS_NAME"; then
 	exit 1
 fi
 
+HOST_VETH="$(jq -r '.network.hostInterface // empty' "$CONFIG_FILE")"
+NS_VETH="$(jq -r '.network.sandboxInterface // empty' "$CONFIG_FILE")"
+HOST_ADDR="$(jq -r '.network.hostAddress // empty' "$CONFIG_FILE")"
+NS_ADDR="$(jq -r '.network.sandboxAddress // empty' "$CONFIG_FILE")"
+if [[ -n "$HOST_VETH" && -n "$NS_VETH" && -n "$HOST_ADDR" && -n "$NS_ADDR" ]]; then
+	echo "[run-server] WAN -> host($HOST_VETH $HOST_ADDR) -> netns($NS_VETH $NS_ADDR) via namespace '$NS_NAME'"
+fi
+
 ORIG_UID="${IR_ORIG_UID:-${SUDO_UID:-$(id -u)}}"  # when already root, falls back to current uid
 ORIG_GID="${IR_ORIG_GID:-${SUDO_GID:-$(id -g)}}"
 ORIG_USER="${IR_ORIG_USER:-${SUDO_USER:-$(id -un)}}"
@@ -127,7 +135,7 @@ declare -a NS_CMD=(ip netns exec "$NS_NAME")
 if [[ "${#DROPPER_CMD[@]}" -gt 0 ]]; then
 	NS_CMD+=("${DROPPER_CMD[@]}")
 fi
-NS_CMD+=(env IR_NETNS_SANDBOX=1 "${NODE_ENV_VARS[@]}" node "$SERVER_JS")
+NS_CMD+=(env IR_NETNS_SANDBOX=1 IR_NETNS_NAME="$NS_NAME" "${NODE_ENV_VARS[@]}" node "$SERVER_JS")
 NS_CMD+=("${FORWARDED_ARGS[@]}")
 
 set +e

@@ -31,9 +31,11 @@ const httpsPort = Number(process.env.HTTPS_PORT || (useCf ? 3433 : 443));
 const twebHttpsPort = Number(
 	process.env.TWEB_HTTPS_PORT || (useCf ? 3434 : httpsPort),
 );
-const enableHttpRedirect = useCf
-	? false
-	: parseBoolean(process.env.ENABLE_HTTP_REDIRECT ?? "true", true);
+const cfTunnelMode = parseBoolean(process.env.CF_TUNNEL_MODE ?? "false", false);
+const enableHttpRedirect =
+	useCf && !cfTunnelMode
+		? false
+		: parseBoolean(process.env.ENABLE_HTTP_REDIRECT ?? "true", true);
 const httpPort = Number(process.env.HTTP_PORT || 80);
 
 const payload = {
@@ -42,6 +44,7 @@ const payload = {
 	httpPort,
 	enableHttpRedirect,
 	useCf,
+	cfTunnelMode,
 };
 
 process.stdout.write(JSON.stringify(payload));

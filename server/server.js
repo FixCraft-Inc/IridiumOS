@@ -97,6 +97,17 @@ function upsertEnvValue(key, value) {
 	return targetPath;
 }
 
+function resolveSocketPath(candidate, fallbackRelative) {
+	const fallback = path.isAbsolute(fallbackRelative)
+		? fallbackRelative
+		: path.join(ROOT_DIR, fallbackRelative);
+	if (typeof candidate !== "string" || !candidate.trim()) {
+		return fallback;
+	}
+	const trimmed = candidate.trim();
+	return path.isAbsolute(trimmed) ? trimmed : path.join(ROOT_DIR, trimmed);
+}
+
 function parseBoolean(value, defaultValue = false) {
 	if (value === undefined || value === null) return defaultValue;
 	const normalized = String(value).trim().toLowerCase();
@@ -136,6 +147,20 @@ console.log(
 			: "non-interactive (signals only)"
 	}`,
 );
+
+const runningInsideNamespace = Boolean(process.env.IR_NETNS_SANDBOX);
+const networkNamespaceName =
+	typeof process.env.IR_NETNS_NAME === "string" && process.env.IR_NETNS_NAME.trim()
+		? process.env.IR_NETNS_NAME.trim()
+		: null;
+if (runningInsideNamespace) {
+	const nsLabel = networkNamespaceName
+		? `network namespace '${networkNamespaceName}'`
+		: "network namespace";
+	console.log(
+		`[netns] Running inside ${nsLabel}; WAN traffic should arrive from the host uplink before being DNAT'd across the veth /30.`,
+	);
+}
 
 let consoleInterface = null;
 let consoleClosing = false;
@@ -201,6 +226,10 @@ function ensureCookieSecret() {
 }
 
 const USE_CF = parseBoolean(process.env.USE_CF, true);
+const CF_TUNNEL_MODE = parseBoolean(
+	process.env.CF_TUNNEL_MODE ?? "false",
+	false,
+);
 const ENABLE_LOCAL_DDOS_GUARD = parseBoolean(
 	process.env.ENABLE_LOCAL_DDOS_GUARD ?? "true",
 	true,
@@ -224,10 +253,49 @@ const TWEB_HTTPS_PORT = Number(
 	process.env.TWEB_HTTPS_PORT || (USE_CF ? 3434 : HTTPS_PORT),
 );
 const HTTP_PORT = Number(process.env.HTTP_PORT || 80);
-const ENABLE_HTTP_REDIRECT = USE_CF
+const ENABLE_HTTP_REDIRECT = CF_TUNNEL_MODE
 	? false
-	: parseBoolean(process.env.ENABLE_HTTP_REDIRECT ?? "true", true);
-const USE_SEPARATE_TWEB_PORT = TWEB_HTTPS_PORT !== HTTPS_PORT;
+	: USE_CF
+		? false
+		: parseBoolean(process.env.ENABLE_HTTP_REDIRECT ?? "true", true);
+const ENABLE_IPV4_BINDINGS = parseBoolean(
+	process.env.ENABLE_IPV4_BINDINGS ?? "true",
+	true,
+);
+const ENABLE_IPV6_BINDINGS = parseBoolean(
+	process.env.ENABLE_IPV6_BINDINGS ?? "true",
+	true,
+);
+const IPV4_BIND_ADDRESS =
+	typeof process.env.IPV4_BIND_ADDRESS === "string" &&
+	process.env.IPV4_BIND_ADDRESS.trim()
+		? process.env.IPV4_BIND_ADDRESS.trim()
+		: "0.0.0.0";
+const IPV6_BIND_ADDRESS =
+	typeof process.env.IPV6_BIND_ADDRESS === "string" &&
+	process.env.IPV6_BIND_ADDRESS.trim()
+		? process.env.IPV6_BIND_ADDRESS.trim()
+		: "::";
+const CF_TUNNEL_SOCKET_PATH = CF_TUNNEL_MODE
+	? resolveSocketPath(
+			process.env.CF_TUNNEL_SOCKET,
+			path.join(__dirname, ".irRUNTIME", "cf-tunnel.sock"),
+		)
+	: "";
+const USE_SEPARATE_TWEB_PORT =
+	!CF_TUNNEL_MODE && TWEB_HTTPS_PORT !== HTTPS_PORT;
+const CF_TUNNEL_HTTP_HOST =
+	CF_TUNNEL_MODE &&
+	typeof process.env.CF_TUNNEL_HTTP_HOST === "string" &&
+	process.env.CF_TUNNEL_HTTP_HOST.trim()
+		? process.env.CF_TUNNEL_HTTP_HOST.trim()
+		: "127.0.0.1";
+const CF_TUNNEL_HTTP_PORT = Number(
+	process.env.CF_TUNNEL_HTTP_PORT ||
+		process.env.CF_TUNNEL_PORT ||
+		HTTPS_PORT,
+);
+const CF_EDGE_GUARD_ENABLED = USE_CF && !CF_TUNNEL_MODE;
 const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 15000);
 const RATE_LIMIT_MAX_REQUESTS = Number(
 	process.env.RATE_LIMIT_MAX_REQUESTS || 300,
@@ -607,6 +675,7 @@ function cleanupRuntimeArtifactsSafe() {
 	}
 	runtimeCleanupTriggered = true;
 	cleanupRuntimeArtifacts();
+	cleanupTunnelSockets();
 }
 process.once("exit", cleanupRuntimeArtifactsSafe);
 
@@ -792,6 +861,8 @@ if (fs.existsSync(TWEB_MODULE_ENTRY)) {
 		}
 	}
 }
+
+const telegramModuleEnabled = Boolean(createTwebAppFactory);
 
 if (!availableModules.length) {
 	console.log("[modules] 🎛️ Running modules: NONE");
@@ -1039,7 +1110,7 @@ function isDirectIpAccess(req) {
 		return false;
 	}
 	// Allow Cloudflare to hit the origin IP when CF is enabled so only CF can reach it.
-	if (USE_CF && isCloudflareRequest(req)) {
+	if (CF_EDGE_GUARD_ENABLED && isCloudflareRequest(req)) {
 		return false;
 	}
 	return true;
@@ -1860,7 +1931,7 @@ const mainApp = createProtectedHostApp({
 	openPrefixes: AUTH_OPEN_PREFIXES,
 });
 let twebContentApp;
-if (createTwebAppFactory) {
+if (telegramModuleEnabled) {
 	twebContentApp = createTwebAppFactory();
 } else {
 	const unavailableRouter = express.Router();
@@ -1877,10 +1948,13 @@ const twebHostApp = createProtectedHostApp({
 	openPrefixes: TWEB_AUTH_OPEN_PREFIXES,
 });
 twebHostApp.use(twebContentApp);
+const twebDispatcher =
+	USE_SEPARATE_TWEB_PORT && telegramModuleEnabled
+		? createTwebDispatcher()
+		: null;
 const mainDispatcher = createMainDispatcher({
-	allowTwebHosts: !USE_SEPARATE_TWEB_PORT,
+	allowTwebHosts: CF_TUNNEL_MODE || !USE_SEPARATE_TWEB_PORT || !twebDispatcher,
 });
-const twebDispatcher = USE_SEPARATE_TWEB_PORT ? createTwebDispatcher() : null;
 
 // === VHOST DISPATCH ===
 function enforceEdgeGuards(req, res) {
@@ -1889,7 +1963,7 @@ function enforceEdgeGuards(req, res) {
 		renderDirectIpBlockedPage(res);
 		return true;
 	}
-	if (USE_CF && !isCloudflareRequest(req)) {
+	if (CF_EDGE_GUARD_ENABLED && !isCloudflareRequest(req)) {
 		console.warn(
 			`[security] Blocked non-Cloudflare request from ${getPeerIp(req) || "unknown"} while USE_CF=true`,
 		);
@@ -2078,6 +2152,127 @@ function hardenHttpServer(server) {
 	});
 }
 
+function describeBindHost(host) {
+	if (!host || host === "*") {
+		return "*";
+	}
+	if (host === "::") {
+		return "[::]";
+	}
+	return host;
+}
+
+function describeListenTarget(target) {
+	if (!target) {
+		return "*:unknown";
+	}
+	if (target.type === "unix") {
+		return target.path;
+	}
+	const printableHost = describeBindHost(target.host ?? "*");
+	return `${printableHost}:${target.port}`;
+}
+
+function prepareUnixSocketPath(socketPath) {
+	if (!socketPath) return;
+	const dir = path.dirname(socketPath);
+	fs.mkdirSync(dir, { recursive: true });
+	try {
+		fs.unlinkSync(socketPath);
+	} catch (error) {
+		if (error && error.code !== "ENOENT") {
+			console.warn(
+				`[server] Could not remove stale socket at ${socketPath}: ${
+					error instanceof Error ? error.message : error
+				}`,
+			);
+		}
+	}
+}
+
+function cleanupUnixSocket(socketPath) {
+	if (!socketPath) return;
+	try {
+		fs.unlinkSync(socketPath);
+	} catch (error) {
+		if (error && error.code !== "ENOENT") {
+			console.warn(
+				`[server] Failed to remove socket ${socketPath}: ${
+					error instanceof Error ? error.message : error
+				}`,
+			);
+		}
+	}
+}
+
+const tunnelSocketRegistry = new Set();
+function trackUnixSocket(server, socketPath) {
+	if (!server || !socketPath) {
+		return;
+	}
+	tunnelSocketRegistry.add(socketPath);
+	server.once("close", () => {
+		cleanupUnixSocket(socketPath);
+		tunnelSocketRegistry.delete(socketPath);
+	});
+}
+
+function cleanupTunnelSockets() {
+	for (const socketPath of tunnelSocketRegistry) {
+		cleanupUnixSocket(socketPath);
+	}
+	tunnelSocketRegistry.clear();
+}
+
+function buildListenOptions(port, host) {
+	const options = { port };
+	if (host) {
+		options.host = host;
+		if (host.includes(":")) {
+			options.ipv6Only = true;
+		}
+	}
+	return options;
+}
+
+function logServerBindFailure({ label, target, error, fatal }) {
+	const location = describeListenTarget(target);
+	const message = `[server] Failed to bind ${label} on ${location}: ${
+		error instanceof Error ? error.message : error
+	}`;
+	if (fatal) {
+		console.error(message);
+		process.exit(1);
+	} else {
+		console.warn(message);
+	}
+}
+
+function handleWispUpgrade(req, socket, head) {
+	if (isDirectIpAccess(req)) {
+		console.warn(
+			`[security] Blocked direct IP WSS access from ${getClientIp(req)}`,
+		);
+		socket.destroy();
+		return;
+	}
+	if (CF_EDGE_GUARD_ENABLED && !isCloudflareRequest(req)) {
+		console.warn(
+			`[security] Blocked non-Cloudflare WSS request from ${getPeerIp(req) || "unknown"}`,
+		);
+		socket.destroy();
+		return;
+	}
+	const host = getRequestHost(req);
+	if (TWEB_HOSTS.has(host)) {
+		return socket.destroy();
+	}
+	if (MAIN_HOSTS.size && !MAIN_HOSTS.has(host)) {
+		return socket.destroy();
+	}
+	wisp.routeRequest(req, socket, head);
+}
+
 // --- TLS material selection ---
 function loadHttpsOptions() {
 	try {
@@ -2095,99 +2290,251 @@ function loadHttpsOptions() {
 	}
 }
 
-const httpsOptions = loadHttpsOptions();
-
-// --- HTTPS primary ---
-const httpsServer = https.createServer(httpsOptions, mainDispatcher);
-hardenHttpServer(httpsServer);
-shutdownController.track(httpsServer, "HTTPS");
-httpsServer.listen(HTTPS_PORT, () => {
-	console.log(
-		`[server] 🚀 Main HTTPS listening on :${HTTPS_PORT} (${USE_CF ? "Cloudflare origin" : "direct"})`,
-	);
-	ensureInteractiveConsoleReady();
-});
-trackServerForPrivilegeDrop(httpsServer);
-
-let twebHttpsServer = null;
-if (USE_SEPARATE_TWEB_PORT && twebDispatcher) {
-	twebHttpsServer = https.createServer(httpsOptions, twebDispatcher);
-	hardenHttpServer(twebHttpsServer);
-	shutdownController.track(twebHttpsServer, "Telegram HTTPS");
-	twebHttpsServer.listen(TWEB_HTTPS_PORT, () => {
-		console.log(
-			`[server] 💬 Telegram HTTPS listening on :${TWEB_HTTPS_PORT} (dedicated Cloudflare tunnel)`,
-		);
-	});
-	trackServerForPrivilegeDrop(twebHttpsServer);
+const TLS_ENABLED = !CF_TUNNEL_MODE;
+const httpsOptions = TLS_ENABLED ? loadHttpsOptions() : null;
+const TLS_BIND_TARGETS = [];
+if (TLS_ENABLED) {
+	if (ENABLE_IPV6_BINDINGS) {
+		TLS_BIND_TARGETS.push({
+			host: IPV6_BIND_ADDRESS,
+			label: "IPv6",
+			fatalOnError: false,
+		});
+	}
+	if (ENABLE_IPV4_BINDINGS) {
+		TLS_BIND_TARGETS.push({
+			host: IPV4_BIND_ADDRESS,
+			label: "IPv4",
+			fatalOnError: true,
+		});
+	}
+	if (!TLS_BIND_TARGETS.length) {
+		TLS_BIND_TARGETS.push({ host: undefined, label: null, fatalOnError: true });
+	}
+	if (!TLS_BIND_TARGETS.some((target) => target.fatalOnError)) {
+		TLS_BIND_TARGETS[TLS_BIND_TARGETS.length - 1].fatalOnError = true;
+	}
 }
 
-// WISP over WSS
-httpsServer.on("upgrade", (req, socket, head) => {
-	if (isDirectIpAccess(req)) {
-		console.warn(
-			`[security] Blocked direct IP WSS access from ${getClientIp(req)}`,
-		);
-		socket.destroy();
-		return;
-	}
-	if (USE_CF && !isCloudflareRequest(req)) {
-		console.warn(
-			`[security] Blocked non-Cloudflare WSS request from ${getPeerIp(req) || "unknown"}`,
-		);
-		socket.destroy();
-		return;
-	}
-	const host = (req.headers.host || "").replace(/:\d+$/, "").toLowerCase();
-	if (TWEB_HOSTS.has(host)) {
-		return socket.destroy(); // or route to tweb WS if you have one
-	}
-	if (MAIN_HOSTS.size && !MAIN_HOSTS.has(host)) {
-		return socket.destroy();
-	}
-	wisp.routeRequest(req, socket, head);
-});
-
-let httpRedirectServer = null;
-	if (ENABLE_HTTP_REDIRECT) {
-	httpRedirectServer = http.createServer((req, res) => {
-			if (USE_CF && !isCloudflareRequest(req)) {
-				renderDirectIpBlockedPage(
-					res,
-					"Cloudflare gateway is required for this origin.",
-					403,
-				);
-				return;
-			}
-			if (isDirectIpAccess(req)) {
-				renderDirectIpBlockedPage(res);
-				return;
-			}
-		const hostCandidate =
-			getRequestHost(req) ||
-			getFirstHost(MAIN_HOSTS) ||
-			getFirstHost(TWEB_HOSTS);
-		if (!hostCandidate) {
-			res
-				.writeHead(421, {
-					"Content-Type": "text/plain; charset=utf-8",
-				})
-				.end("No hostname configured");
-			return;
-		}
-		const location = `https://${hostCandidate}${req.url || "/"}`;
-		res.writeHead(301, {
-			Location: location,
-			"Content-Type": "text/plain; charset=utf-8",
+if (CF_TUNNEL_MODE) {
+	const tunnelTargets = [];
+	if (CF_TUNNEL_SOCKET_PATH) {
+		tunnelTargets.push({
+			type: "unix",
+			path: CF_TUNNEL_SOCKET_PATH,
+			label: "unix",
+			fatalOnError: false,
 		});
-		res.end("Redirecting to HTTPS");
+	}
+	tunnelTargets.push({
+		type: "tcp",
+		host: CF_TUNNEL_HTTP_HOST,
+		port: CF_TUNNEL_HTTP_PORT,
+		label: "loopback",
+		fatalOnError: !CF_TUNNEL_SOCKET_PATH,
 	});
-hardenHttpServer(httpRedirectServer);
-shutdownController.track(httpRedirectServer, "HTTP redirect");
-httpRedirectServer.listen(HTTP_PORT, () => {
-	console.log(`[server] ↪ HTTP redirector on :${HTTP_PORT} → HTTPS :${HTTPS_PORT}`);
-});
-trackServerForPrivilegeDrop(httpRedirectServer);
+	let tunnelReadyLogged = false;
+	for (const target of tunnelTargets) {
+		const server = http.createServer(mainDispatcher);
+		hardenHttpServer(server);
+		const trackLabel =
+			target.type === "unix"
+				? "CF tunnel socket"
+				: `CF tunnel ${target.label ?? "loopback"}`;
+		shutdownController.track(server, trackLabel);
+		server.on("upgrade", handleWispUpgrade);
+		const errorHandler = (error) =>
+			logServerBindFailure({
+				label: `Cloudflare tunnel (${target.label || target.type})`,
+				target,
+				error,
+				fatal: target.fatalOnError ?? true,
+			});
+		server.once("error", errorHandler);
+		if (target.type === "unix") {
+			prepareUnixSocketPath(target.path);
+		}
+		const listenArgs =
+			target.type === "unix"
+				? target.path
+				: buildListenOptions(target.port, target.host);
+		server.listen(listenArgs, () => {
+			server.off("error", errorHandler);
+			if (target.type === "unix") {
+				try {
+					fs.chmodSync(target.path, 0o660);
+				} catch (error) {
+					console.warn(
+						`[server] Could not chmod tunnel socket ${target.path}: ${
+							error instanceof Error ? error.message : error
+						}`,
+					);
+				}
+				trackUnixSocket(server, target.path);
+			}
+			const descriptor = describeListenTarget(target);
+			if (!tunnelReadyLogged) {
+				console.log(
+					`[server] 🚇 Cloudflare tunnel backend listening on ${descriptor} (HTTP)`,
+				);
+				tunnelReadyLogged = true;
+				ensureInteractiveConsoleReady();
+			} else {
+				console.log(
+					`[server] 🚇 Additional tunnel listener ready on ${descriptor}`,
+				);
+			}
+		});
+		trackServerForPrivilegeDrop(server);
+	}
+	if (USE_SEPARATE_TWEB_PORT && twebDispatcher) {
+		console.log(
+			"[server] ⚠️ Dedicated Telegram port ignored while CF tunnel mode is enabled; serve Telegram hosts via the main listener.",
+		);
+	}
+} else {
+	// --- HTTPS primary ---
+	let mainHttpsReadyLogged = false;
+	for (const target of TLS_BIND_TARGETS) {
+		const server = https.createServer(httpsOptions, mainDispatcher);
+		hardenHttpServer(server);
+		const trackLabel = target.label ? `HTTPS ${target.label}` : "HTTPS";
+		shutdownController.track(server, trackLabel);
+		server.on("upgrade", handleWispUpgrade);
+		const errorTarget = {
+			type: "tcp",
+			host: target.host ?? "*",
+			port: HTTPS_PORT,
+		};
+		const errorHandler = (error) =>
+			logServerBindFailure({
+				label: `Main HTTPS${target.label ? ` (${target.label})` : ""}`,
+				target: errorTarget,
+				error,
+				fatal: target.fatalOnError,
+			});
+		server.once("error", errorHandler);
+		server.listen(buildListenOptions(HTTPS_PORT, target.host), () => {
+			server.off("error", errorHandler);
+			if (!mainHttpsReadyLogged) {
+				console.log(
+					`[server] 🚀 Main HTTPS listening on :${HTTPS_PORT} (${USE_CF ? "Cloudflare origin" : "direct"})`,
+				);
+				mainHttpsReadyLogged = true;
+				ensureInteractiveConsoleReady();
+			} else {
+				console.log(
+					`[server] 🚀 Main HTTPS (${target.label || describeBindHost(target.host ?? "*")}) listening on ${describeBindHost(target.host ?? "*")}:${HTTPS_PORT}`,
+				);
+			}
+		});
+		trackServerForPrivilegeDrop(server);
+	}
+
+	if (USE_SEPARATE_TWEB_PORT && twebDispatcher) {
+		for (const target of TLS_BIND_TARGETS) {
+			const server = https.createServer(httpsOptions, twebDispatcher);
+			hardenHttpServer(server);
+			const trackLabel = target.label
+				? `Telegram HTTPS ${target.label}`
+				: "Telegram HTTPS";
+			shutdownController.track(server, trackLabel);
+			const errorTarget = {
+				type: "tcp",
+				host: target.host ?? "*",
+				port: TWEB_HTTPS_PORT,
+			};
+			const errorHandler = (error) =>
+				logServerBindFailure({
+					label: `Telegram HTTPS${target.label ? ` (${target.label})` : ""}`,
+					target: errorTarget,
+					error,
+					fatal: target.fatalOnError,
+				});
+			server.once("error", errorHandler);
+			server.listen(buildListenOptions(TWEB_HTTPS_PORT, target.host), () => {
+				server.off("error", errorHandler);
+				console.log(
+					`[server] 💬 Telegram HTTPS${target.label ? ` (${target.label})` : ""} listening on ${describeBindHost(target.host ?? "*")}:${TWEB_HTTPS_PORT} (dedicated Cloudflare tunnel)`,
+				);
+			});
+			trackServerForPrivilegeDrop(server);
+		}
+	} else if (USE_SEPARATE_TWEB_PORT && !twebDispatcher) {
+		console.log(
+			"[modules] Telegram module disabled; skipping dedicated HTTPS listener.",
+		);
+	}
+
+	if (ENABLE_HTTP_REDIRECT) {
+		let httpRedirectLogged = false;
+		for (const target of TLS_BIND_TARGETS) {
+			const server = http.createServer((req, res) => {
+				if (CF_EDGE_GUARD_ENABLED && !isCloudflareRequest(req)) {
+					renderDirectIpBlockedPage(
+						res,
+						"Cloudflare gateway is required for this origin.",
+						403,
+					);
+					return;
+				}
+				if (isDirectIpAccess(req)) {
+					renderDirectIpBlockedPage(res);
+					return;
+				}
+				const hostCandidate =
+					getRequestHost(req) ||
+					getFirstHost(MAIN_HOSTS) ||
+					getFirstHost(TWEB_HOSTS);
+				if (!hostCandidate) {
+					res
+						.writeHead(421, {
+							"Content-Type": "text/plain; charset=utf-8",
+						})
+						.end("No hostname configured");
+					return;
+				}
+				const location = `https://${hostCandidate}${req.url || "/"}`;
+				res.writeHead(301, {
+					Location: location,
+					"Content-Type": "text/plain; charset=utf-8",
+				});
+				res.end("Redirecting to HTTPS");
+			});
+			hardenHttpServer(server);
+			const trackLabel = target.label
+				? `HTTP redirect ${target.label}`
+				: "HTTP redirect";
+			shutdownController.track(server, trackLabel);
+			const errorTarget = {
+				type: "tcp",
+				host: target.host ?? "*",
+				port: HTTP_PORT,
+			};
+			const errorHandler = (error) =>
+				logServerBindFailure({
+					label: `HTTP redirector${target.label ? ` (${target.label})` : ""}`,
+					target: errorTarget,
+					error,
+					fatal: target.fatalOnError,
+				});
+			server.once("error", errorHandler);
+			server.listen(buildListenOptions(HTTP_PORT, target.host), () => {
+				server.off("error", errorHandler);
+				if (!httpRedirectLogged) {
+					console.log(
+						`[server] ↪ HTTP redirector on :${HTTP_PORT} → HTTPS :${HTTPS_PORT}`,
+					);
+					httpRedirectLogged = true;
+				} else {
+					console.log(
+						`[server] ↪ HTTP redirector (${target.label || describeBindHost(target.host ?? "*")}) on ${describeBindHost(target.host ?? "*")}:${HTTP_PORT}`,
+					);
+				}
+			});
+			trackServerForPrivilegeDrop(server);
+		}
+	}
 }
 
 function ensureInteractiveConsoleReady() {
