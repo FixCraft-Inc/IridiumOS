@@ -92,6 +92,10 @@ normalize_config_defaults() {
 
 ensure_config_file() {
 	ensure_dirs
+	if [[ -z "${IR_FORCE_RESOLVCONF:-}" && ! -f "$RESOLVCONF_DISABLE_SENTINEL" ]]; then
+		mkdir -p "$CONFIG_DIR"
+		touch "$RESOLVCONF_DISABLE_SENTINEL" >/dev/null 2>&1 || true
+	fi
 	if [[ ! -f "$CONFIG_FILE" ]]; then
 		printf '%s\n' "$DEFAULT_CONFIG" >"$CONFIG_FILE"
 	fi
@@ -156,8 +160,8 @@ ensure_socat_available() {
 }
 
 start_socat_proxy() {
-	local listen_port="$1"
-	local target_ip="$2"
+	local ns_name="$1"
+	local listen_port="$2"
 	local target_port="$3"
 	if ! ensure_socat_available; then
 		return
@@ -172,7 +176,8 @@ start_socat_proxy() {
 		fi
 		rm -f "$pidfile" >/dev/null 2>&1 || true
 	fi
-	nohup "$SOCAT_PATH_CACHE" TCP-LISTEN:"$listen_port",reuseaddr,fork TCP:"$target_ip":"$target_port" >/dev/null 2>&1 &
+	local exec_cmd=(ip netns exec "$ns_name" socat - TCP:127.0.0.1:"$target_port")
+	nohup "$SOCAT_PATH_CACHE" TCP-LISTEN:"$listen_port",reuseaddr,fork EXEC:"${exec_cmd[*]}" >/dev/null 2>&1 &
 	echo $! >"$pidfile"
 }
 
@@ -540,7 +545,7 @@ apply_firewall() {
 }
 
 start_socat_proxies() {
-	local ns_ip="$1"
+	local ns_name="$1"
 	local https_port="$2"
 	local tweb_port="$3"
 	local http_port="$4"
@@ -549,12 +554,12 @@ start_socat_proxies() {
 	if ! ensure_socat_available; then
 		return
 	fi
-	start_socat_proxy "$https_port" "$ns_ip" "$https_port"
+	start_socat_proxy "$ns_name" "$https_port" "$https_port"
 	if [[ -n "$tweb_port" && "$tweb_port" != "$https_port" ]]; then
-		start_socat_proxy "$tweb_port" "$ns_ip" "$tweb_port"
+		start_socat_proxy "$ns_name" "$tweb_port" "$tweb_port"
 	fi
 	if [[ "$expose_http" == "true" ]]; then
-		start_socat_proxy "$http_port" "$ns_ip" "$http_port"
+		start_socat_proxy "$ns_name" "$http_port" "$http_port"
 	fi
 }
 
@@ -598,7 +603,7 @@ ensure_stack() {
 
 	setup_namespace "$ns" "$host_if" "$ns_if" "$host_addr" "$ns_addr" "$gateway"
 	apply_firewall "$cidr" "$uplink" "$host_if" "$ns_ip_plain" "$RESOLVED_HTTPS_PORT" "$RESOLVED_HTTP_PORT" "$RESOLVED_HTTP_ALLOWED" "$RESOLVED_TWEB_HTTPS_PORT"
-	start_socat_proxies "$ns_ip_plain" "$RESOLVED_HTTPS_PORT" "$RESOLVED_TWEB_HTTPS_PORT" "$RESOLVED_HTTP_PORT" "$RESOLVED_HTTP_ALLOWED"
+	start_socat_proxies "$ns" "$RESOLVED_HTTPS_PORT" "$RESOLVED_TWEB_HTTPS_PORT" "$RESOLVED_HTTP_PORT" "$RESOLVED_HTTP_ALLOWED"
 
 	local vpn_enabled vpn_config vpn_impl
 	vpn_enabled="$(cfg_raw '.vpn.enabled')"

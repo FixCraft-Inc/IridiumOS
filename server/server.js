@@ -205,10 +205,11 @@ const ENABLE_LOCAL_DDOS_GUARD = parseBoolean(
 	process.env.ENABLE_LOCAL_DDOS_GUARD ?? "true",
 	true,
 );
-const DEFAULT_CF_TLS_CERT = "/home/f1xgod/cloudf.pem";
-const DEFAULT_CF_TLS_KEY = "/home/f1xgod/cloudf.key";
-const DEFAULT_ORIGIN_TLS_CERT = "/home/f1xgod/fullchain.pem";
-const DEFAULT_ORIGIN_TLS_KEY = "/home/f1xgod/privkey.pem";
+const SERVER_SECRETS_DIR = path.join(__dirname, "secrets");
+const DEFAULT_CF_TLS_CERT = path.join(SERVER_SECRETS_DIR, "cloudf.pem");
+const DEFAULT_CF_TLS_KEY = path.join(SERVER_SECRETS_DIR, "cloudf.key");
+const DEFAULT_ORIGIN_TLS_CERT = path.join(SERVER_SECRETS_DIR, "fullchain.pem");
+const DEFAULT_ORIGIN_TLS_KEY = path.join(SERVER_SECRETS_DIR, "privkey.pem");
 const TLS_CERT_PATH =
 	process.env.TLS_CERT ||
 	(USE_CF ? DEFAULT_CF_TLS_CERT : DEFAULT_ORIGIN_TLS_CERT);
