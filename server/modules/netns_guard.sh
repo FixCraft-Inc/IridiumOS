@@ -38,6 +38,8 @@ WIREGUARD_AUTOMOD_ROUTE_TABLE="42424"
 ACTIVE_NS_IF=""
 ACTIVE_HOST_IF=""
 ACTIVE_NS_GATEWAY=""
+ACTIVE_NS_CIDR=""
+ACTIVE_NS_IP=""
 
 read -r -d '' DEFAULT_CONFIG <<'JSON' || true
 {
@@ -466,11 +468,13 @@ wireguard_configure_bypass_routes() {
 	local ns="$1"
 	local ns_if="${ACTIVE_NS_IF:-}"
 	local gateway="${ACTIVE_NS_GATEWAY:-}"
+	local cidr="${ACTIVE_NS_CIDR:-}"
+	local ns_ip="${ACTIVE_NS_IP:-}"
 	if ! netns_exists "$ns"; then
 		return 1
 	fi
-	if [[ -z "$ns_if" || -z "$gateway" ]]; then
-		log_warn "WireGuard auto-moderation skipped; missing namespace interface or gateway."
+	if [[ -z "$ns_if" || -z "$gateway" || -z "$cidr" || -z "$ns_ip" ]]; then
+		log_warn "WireGuard auto-moderation skipped; missing namespace interface, gateway, or CIDR."
 		return 1
 	fi
 	if ! ip netns exec "$ns" ip link show "$ns_if" >/dev/null 2>&1; then
@@ -478,6 +482,16 @@ wireguard_configure_bypass_routes() {
 		return 1
 	fi
 	wireguard_flush_route_table "$ns"
+	# The bypass table previously only had a default route. Once WireGuard
+	# replaced the main table's default gateway, the kernel considered the
+	# dedicated table unusable (no connected route to reach $gateway) and
+	# fell back to the wg0 default. We now install the /30 link route first
+	# so table 42424 remains valid and reply traffic can exit via the host.
+	if ! ip netns exec "$ns" ip route replace table "$WIREGUARD_AUTOMOD_ROUTE_TABLE" \
+		"$cidr" dev "$ns_if" proto kernel scope link src "$ns_ip" >/dev/null 2>&1; then
+		log_warn "WireGuard auto-moderation could not program bypass link route."
+		return 1
+	fi
 	if ! ip netns exec "$ns" ip route replace table "$WIREGUARD_AUTOMOD_ROUTE_TABLE" default via "$gateway" dev "$ns_if" >/dev/null 2>&1; then
 		log_warn "WireGuard auto-moderation could not program IPv4 bypass route."
 		return 1
@@ -965,6 +979,8 @@ ensure_stack() {
 	ACTIVE_NS_IF="$ns_if"
 	ACTIVE_HOST_IF="$host_if"
 	ACTIVE_NS_GATEWAY="$gateway"
+	ACTIVE_NS_CIDR="$cidr"
+	ACTIVE_NS_IP="$ns_ip_plain"
 	setup_namespace "$ns" "$host_if" "$ns_if" "$host_addr" "$ns_addr" "$gateway"
 	verify_namespace_link "$ns" "$gateway"
 	configure_namespace_dns "$ns"
@@ -1017,6 +1033,9 @@ teardown_stack() {
 	rm -rf "$STATE_DIR" >/dev/null 2>&1 || true
 	ACTIVE_NS_IF=""
 	ACTIVE_HOST_IF=""
+	ACTIVE_NS_GATEWAY=""
+	ACTIVE_NS_CIDR=""
+	ACTIVE_NS_IP=""
 }
 
 status_report() {
