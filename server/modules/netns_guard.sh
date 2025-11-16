@@ -34,8 +34,10 @@ WIREGUARD_AUTOMOD_COMMENT="IRIDIUM-NETNS-WG-AUTO"
 WIREGUARD_AUTOMOD_MARK_HEX="0x4fd"
 WIREGUARD_AUTOMOD_MARK_MASK="0xffffffff"
 WIREGUARD_AUTOMOD_RULE_PREF=10120
+WIREGUARD_AUTOMOD_ROUTE_TABLE="42424"
 ACTIVE_NS_IF=""
 ACTIVE_HOST_IF=""
+ACTIVE_NS_GATEWAY=""
 
 read -r -d '' DEFAULT_CONFIG <<'JSON' || true
 {
@@ -451,6 +453,38 @@ wireguard_bypass_ports() {
 	printf '%s\n' "${ports[@]}"
 }
 
+wireguard_flush_route_table() {
+	local ns="$1"
+	if ! netns_exists "$ns"; then
+		return
+	fi
+	ip netns exec "$ns" ip route flush table "$WIREGUARD_AUTOMOD_ROUTE_TABLE" >/dev/null 2>&1 || true
+	ip netns exec "$ns" ip -6 route flush table "$WIREGUARD_AUTOMOD_ROUTE_TABLE" >/dev/null 2>&1 || true
+}
+
+wireguard_configure_bypass_routes() {
+	local ns="$1"
+	local ns_if="${ACTIVE_NS_IF:-}"
+	local gateway="${ACTIVE_NS_GATEWAY:-}"
+	if ! netns_exists "$ns"; then
+		return 1
+	fi
+	if [[ -z "$ns_if" || -z "$gateway" ]]; then
+		log_warn "WireGuard auto-moderation skipped; missing namespace interface or gateway."
+		return 1
+	fi
+	if ! ip netns exec "$ns" ip link show "$ns_if" >/dev/null 2>&1; then
+		log_warn "WireGuard auto-moderation skipped; interface $ns_if not present."
+		return 1
+	fi
+	wireguard_flush_route_table "$ns"
+	if ! ip netns exec "$ns" ip route replace table "$WIREGUARD_AUTOMOD_ROUTE_TABLE" default via "$gateway" dev "$ns_if" >/dev/null 2>&1; then
+		log_warn "WireGuard auto-moderation could not program IPv4 bypass route."
+		return 1
+	fi
+	return 0
+}
+
 wireguard_disable_automoderation() {
 	local ns="$1"
 	if ! netns_exists "$ns"; then
@@ -464,6 +498,7 @@ wireguard_disable_automoderation() {
 	ip netns exec "$ns" iptables -t mangle -X "$WIREGUARD_AUTOMOD_OUT_CHAIN" >/dev/null 2>&1 || true
 	ip netns exec "$ns" ip -4 rule delete pref "$WIREGUARD_AUTOMOD_RULE_PREF" >/dev/null 2>&1 || true
 	ip netns exec "$ns" ip -6 rule delete pref "$WIREGUARD_AUTOMOD_RULE_PREF" >/dev/null 2>&1 || true
+	wireguard_flush_route_table "$ns"
 }
 
 wireguard_enable_automoderation() {
@@ -484,6 +519,10 @@ wireguard_enable_automoderation() {
 	local -a ports=()
 	mapfile -t ports < <(wireguard_bypass_ports) || true
 	if ((${#ports[@]} == 0)); then
+		wireguard_disable_automoderation "$ns"
+		return
+	fi
+	if ! wireguard_configure_bypass_routes "$ns"; then
 		wireguard_disable_automoderation "$ns"
 		return
 	fi
@@ -509,7 +548,7 @@ wireguard_enable_automoderation() {
 		-m connmark --mark "${WIREGUARD_AUTOMOD_MARK_HEX}/${WIREGUARD_AUTOMOD_MARK_MASK}" \
 		-j CONNMARK --restore-mark
 	ip netns exec "$ns" ip -4 rule delete pref "$WIREGUARD_AUTOMOD_RULE_PREF" >/dev/null 2>&1 || true
-	ip netns exec "$ns" ip -4 rule add pref "$WIREGUARD_AUTOMOD_RULE_PREF" fwmark "$WIREGUARD_AUTOMOD_MARK_HEX" lookup main >/dev/null 2>&1 || true
+	ip netns exec "$ns" ip -4 rule add pref "$WIREGUARD_AUTOMOD_RULE_PREF" fwmark "$WIREGUARD_AUTOMOD_MARK_HEX" lookup "$WIREGUARD_AUTOMOD_ROUTE_TABLE" >/dev/null 2>&1 || true
 	ip netns exec "$ns" ip -6 rule delete pref "$WIREGUARD_AUTOMOD_RULE_PREF" >/dev/null 2>&1 || true
 	ip netns exec "$ns" ip -6 rule add pref "$WIREGUARD_AUTOMOD_RULE_PREF" fwmark "$WIREGUARD_AUTOMOD_MARK_HEX" lookup main >/dev/null 2>&1 || true
 	log_info "WireGuard auto-moderation active for ports: ${ports[*]}"
@@ -892,6 +931,22 @@ ensure_stack() {
 	gateway="$(cfg_raw '.network.gateway')"
 	uplink="$(cfg_raw '.routing.uplink')"
 
+	if [[ -n "$gateway" && "$gateway" != "null" ]]; then
+		gateway="$(strip_mask "$gateway")"
+	else
+		gateway=""
+	fi
+	if [[ -z "$gateway" ]]; then
+		gateway="$(strip_mask "$host_addr")"
+		if [[ -n "$gateway" ]]; then
+			set_config_string '.network.gateway' "$gateway"
+		fi
+	fi
+	if [[ -z "$gateway" ]]; then
+		log_error "Sandbox gateway is unset; update .network.gateway in netns config."
+		exit 1
+	fi
+
 	if [[ -z "$uplink" || "$uplink" == "null" ]]; then
 		uplink="$(detect_uplink_iface)"
 		if [[ -z "$uplink" ]]; then
@@ -909,6 +964,7 @@ ensure_stack() {
 
 	ACTIVE_NS_IF="$ns_if"
 	ACTIVE_HOST_IF="$host_if"
+	ACTIVE_NS_GATEWAY="$gateway"
 	setup_namespace "$ns" "$host_if" "$ns_if" "$host_addr" "$ns_addr" "$gateway"
 	verify_namespace_link "$ns" "$gateway"
 	configure_namespace_dns "$ns"
