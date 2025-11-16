@@ -656,12 +656,19 @@ ensure_wireguard_stub() {
 	if [ -z "$path" ]; then
 		path="$DEFAULT_WG_PATH"
 	fi
-	mkdir -p "$(dirname "$path")"
+	local dir
+	dir="$(dirname "$path")"
+	mkdir -p "$dir" 2>/dev/null || true
+	if [ ! -w "$dir" ]; then
+		echo "[Sandbox] WireGuard secrets directory '$dir' is not writable. Skipping template creation."
+		echo "[Sandbox] Update the sandbox config to point at a writable path or fix permissions."
+		return 0
+	fi
 	if [ -f "$path" ]; then
 		echo "[Sandbox] WireGuard config already exists at $path"
 		return 0
 	fi
-	cat >"$path" <<'EOF'
+	if ! cat >"$path" <<'EOF'
 [Interface]
 # Replace the values below with your real WireGuard credentials
 PrivateKey = CHANGE_ME
@@ -674,7 +681,12 @@ AllowedIPs = 0.0.0.0/0, ::/0
 Endpoint = vpn.example.com:51820
 PersistentKeepalive = 25
 EOF
-	chmod 600 "$path"
+	then
+		echo "[Sandbox] Unable to write WireGuard template at $path (permission denied?)."
+		echo "[Sandbox] Adjust permissions or edit .iridium-netns/config.json to use another location."
+		return 0
+	fi
+	chmod 600 "$path" >/dev/null 2>&1 || true
 	echo "[Sandbox] Created WireGuard template at $path"
 }
 

@@ -27,6 +27,15 @@ DEFAULT_DNS_FALLBACKS=(
 	"2606:4700:4700::1111"
 	"2606:4700:4700::1001"
 )
+WIREGUARD_AUTOMOD_CHAIN="IR_NETNS_WG_AUTOMOD"
+WIREGUARD_AUTOMOD_PR_CHAIN="IR_NETNS_WG_AUTOMOD_PR"
+WIREGUARD_AUTOMOD_OUT_CHAIN="IR_NETNS_WG_AUTOMOD_OUT"
+WIREGUARD_AUTOMOD_COMMENT="IRIDIUM-NETNS-WG-AUTO"
+WIREGUARD_AUTOMOD_MARK_HEX="0x4fd"
+WIREGUARD_AUTOMOD_MARK_MASK="0xffffffff"
+WIREGUARD_AUTOMOD_RULE_PREF=10120
+ACTIVE_NS_IF=""
+ACTIVE_HOST_IF=""
 
 read -r -d '' DEFAULT_CONFIG <<'JSON' || true
 {
@@ -303,6 +312,23 @@ set_config_path() {
 	set_config_string "$key" "$resolved"
 }
 
+append_unique_port() {
+	local -n __arr="$1"
+	local candidate="$2"
+	if [[ -z "$candidate" || "$candidate" == "null" ]]; then
+		return
+	fi
+	if ! [[ "$candidate" =~ ^[0-9]+$ ]]; then
+		return
+	fi
+	for existing in "${__arr[@]}"; do
+		if [[ "$existing" == "$candidate" ]]; then
+			return
+		fi
+	done
+	__arr+=("$candidate")
+}
+
 trim_string() {
 	local value="$*"
 	value="${value#${value%%[![:space:]]*}}"
@@ -413,6 +439,80 @@ apply_wireguard_dns() {
 	else
 		configure_namespace_dns "$ns"
 	fi
+}
+
+wireguard_bypass_ports() {
+	local -a ports=()
+	append_unique_port ports "$RESOLVED_HTTPS_PORT"
+	append_unique_port ports "$RESOLVED_TWEB_HTTPS_PORT"
+	if [[ "$RESOLVED_HTTP_ALLOWED" == "true" ]]; then
+		append_unique_port ports "$RESOLVED_HTTP_PORT"
+	fi
+	printf '%s\n' "${ports[@]}"
+}
+
+wireguard_disable_automoderation() {
+	local ns="$1"
+	if ! netns_exists "$ns"; then
+		return
+	fi
+	ip netns exec "$ns" iptables -t mangle -F "$WIREGUARD_AUTOMOD_PR_CHAIN" >/dev/null 2>&1 || true
+	ip netns exec "$ns" iptables -t mangle -F "$WIREGUARD_AUTOMOD_OUT_CHAIN" >/dev/null 2>&1 || true
+	ip netns exec "$ns" iptables -t mangle -D PREROUTING -j "$WIREGUARD_AUTOMOD_PR_CHAIN" >/dev/null 2>&1 || true
+	ip netns exec "$ns" iptables -t mangle -D OUTPUT -j "$WIREGUARD_AUTOMOD_OUT_CHAIN" >/dev/null 2>&1 || true
+	ip netns exec "$ns" iptables -t mangle -X "$WIREGUARD_AUTOMOD_PR_CHAIN" >/dev/null 2>&1 || true
+	ip netns exec "$ns" iptables -t mangle -X "$WIREGUARD_AUTOMOD_OUT_CHAIN" >/dev/null 2>&1 || true
+	ip netns exec "$ns" ip -4 rule delete pref "$WIREGUARD_AUTOMOD_RULE_PREF" >/dev/null 2>&1 || true
+	ip netns exec "$ns" ip -6 rule delete pref "$WIREGUARD_AUTOMOD_RULE_PREF" >/dev/null 2>&1 || true
+}
+
+wireguard_enable_automoderation() {
+	local ns="$1"
+	local ns_if="${ACTIVE_NS_IF:-}"
+	if ! netns_exists "$ns"; then
+		return
+	fi
+	if [[ -z "$ns_if" ]]; then
+		log_warn "WireGuard auto-moderation skipped; sandbox interface unknown."
+		wireguard_disable_automoderation "$ns"
+		return
+	fi
+	if [[ "$RESOLVED_WAN_EXPOSED" != "true" ]]; then
+		wireguard_disable_automoderation "$ns"
+		return
+	fi
+	local -a ports=()
+	mapfile -t ports < <(wireguard_bypass_ports) || true
+	if ((${#ports[@]} == 0)); then
+		wireguard_disable_automoderation "$ns"
+		return
+	fi
+	ip netns exec "$ns" iptables -t mangle -N "$WIREGUARD_AUTOMOD_PR_CHAIN" >/dev/null 2>&1 || true
+	ip netns exec "$ns" iptables -t mangle -N "$WIREGUARD_AUTOMOD_OUT_CHAIN" >/dev/null 2>&1 || true
+	ip netns exec "$ns" iptables -t mangle -F "$WIREGUARD_AUTOMOD_PR_CHAIN"
+	ip netns exec "$ns" iptables -t mangle -F "$WIREGUARD_AUTOMOD_OUT_CHAIN"
+	if ! ip netns exec "$ns" iptables -t mangle -C PREROUTING -j "$WIREGUARD_AUTOMOD_PR_CHAIN" >/dev/null 2>&1; then
+		ip netns exec "$ns" iptables -t mangle -A PREROUTING -j "$WIREGUARD_AUTOMOD_PR_CHAIN"
+	fi
+	if ! ip netns exec "$ns" iptables -t mangle -C OUTPUT -j "$WIREGUARD_AUTOMOD_OUT_CHAIN" >/dev/null 2>&1; then
+		ip netns exec "$ns" iptables -t mangle -A OUTPUT -j "$WIREGUARD_AUTOMOD_OUT_CHAIN"
+	fi
+	local port
+	for port in "${ports[@]}"; do
+		ip netns exec "$ns" iptables -t mangle -A "$WIREGUARD_AUTOMOD_PR_CHAIN" \
+			-i "$ns_if" -p tcp --dport "$port" \
+			-m comment --comment "$WIREGUARD_AUTOMOD_COMMENT" \
+			-j CONNMARK --set-mark "${WIREGUARD_AUTOMOD_MARK_HEX}/${WIREGUARD_AUTOMOD_MARK_MASK}"
+	done
+	ip netns exec "$ns" iptables -t mangle -A "$WIREGUARD_AUTOMOD_OUT_CHAIN" \
+		-m conntrack --ctstate ESTABLISHED,RELATED \
+		-m connmark --mark "${WIREGUARD_AUTOMOD_MARK_HEX}/${WIREGUARD_AUTOMOD_MARK_MASK}" \
+		-j CONNMARK --restore-mark
+	ip netns exec "$ns" ip -4 rule delete pref "$WIREGUARD_AUTOMOD_RULE_PREF" >/dev/null 2>&1 || true
+	ip netns exec "$ns" ip -4 rule add pref "$WIREGUARD_AUTOMOD_RULE_PREF" fwmark "$WIREGUARD_AUTOMOD_MARK_HEX" lookup main >/dev/null 2>&1 || true
+	ip netns exec "$ns" ip -6 rule delete pref "$WIREGUARD_AUTOMOD_RULE_PREF" >/dev/null 2>&1 || true
+	ip netns exec "$ns" ip -6 rule add pref "$WIREGUARD_AUTOMOD_RULE_PREF" fwmark "$WIREGUARD_AUTOMOD_MARK_HEX" lookup main >/dev/null 2>&1 || true
+	log_info "WireGuard auto-moderation active for ports: ${ports[*]}"
 }
 
 pretty_bool() {
@@ -568,6 +668,7 @@ wg_interface_name() {
 wireguard_down() {
 	local ns="$1"
 	local cfg_path="$2"
+	wireguard_disable_automoderation "$ns"
 	local resolved
 	resolved="$(canonicalize_path "$cfg_path")"
 	if [[ -z "$resolved" ]]; then
@@ -617,6 +718,7 @@ wireguard_up() {
 		fi
 	fi
 	apply_wireguard_dns "$ns" "$resolved"
+	wireguard_enable_automoderation "$ns"
 }
 
 handle_wireguard_up_failure() {
@@ -805,6 +907,8 @@ ensure_stack() {
 	ns_ip_plain="$(strip_mask "$ns_addr")"
 	host_ip_plain="$(strip_mask "$host_addr")"
 
+	ACTIVE_NS_IF="$ns_if"
+	ACTIVE_HOST_IF="$host_if"
 	setup_namespace "$ns" "$host_if" "$ns_if" "$host_addr" "$ns_addr" "$gateway"
 	verify_namespace_link "$ns" "$gateway"
 	configure_namespace_dns "$ns"
@@ -855,6 +959,8 @@ teardown_stack() {
 	fi
 	remove_namespace_dns "$ns"
 	rm -rf "$STATE_DIR" >/dev/null 2>&1 || true
+	ACTIVE_NS_IF=""
+	ACTIVE_HOST_IF=""
 }
 
 status_report() {

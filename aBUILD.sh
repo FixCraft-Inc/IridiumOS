@@ -11,6 +11,7 @@ mkdir -p "$dst"
 
 # 2) sync (include .git so git/submodules work)
 #    use "$src/." so rsync copies dotfiles correctly
+sudo rm -rf "$dst"
 rsync -a --delete \
   "$src/." "$dst/"
 
