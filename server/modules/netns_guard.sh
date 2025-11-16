@@ -557,6 +557,22 @@ wireguard_enable_automoderation() {
 			-m comment --comment "$WIREGUARD_AUTOMOD_COMMENT" \
 			-j CONNMARK --set-mark "${WIREGUARD_AUTOMOD_MARK_HEX}/${WIREGUARD_AUTOMOD_MARK_MASK}"
 	done
+	# We also stamp the packet mark directly on egress so the routing decision
+	# in OUTPUT always sees the bypass mark on the first SYN/ACK. Previously we
+	# only touched the connection mark in PREROUTING, so the skb mark stayed 0
+	# and replies still followed WireGuard's default route.
+	for port in "${ports[@]}"; do
+		ip netns exec "$ns" iptables -t mangle -A "$WIREGUARD_AUTOMOD_OUT_CHAIN" \
+			-o "$ns_if" -p tcp --sport "$port" \
+			-m conntrack --ctstate NEW,ESTABLISHED,RELATED \
+			-m comment --comment "$WIREGUARD_AUTOMOD_COMMENT" \
+			-j MARK --set-xmark "${WIREGUARD_AUTOMOD_MARK_HEX}/${WIREGUARD_AUTOMOD_MARK_MASK}"
+		ip netns exec "$ns" iptables -t mangle -A "$WIREGUARD_AUTOMOD_OUT_CHAIN" \
+			-o "$ns_if" -p tcp --sport "$port" \
+			-m conntrack --ctstate NEW,ESTABLISHED,RELATED \
+			-m comment --comment "$WIREGUARD_AUTOMOD_COMMENT" \
+			-j CONNMARK --save-mark
+	done
 	ip netns exec "$ns" iptables -t mangle -A "$WIREGUARD_AUTOMOD_OUT_CHAIN" \
 		-m conntrack --ctstate ESTABLISHED,RELATED \
 		-m connmark --mark "${WIREGUARD_AUTOMOD_MARK_HEX}/${WIREGUARD_AUTOMOD_MARK_MASK}" \

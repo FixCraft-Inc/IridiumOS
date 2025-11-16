@@ -21,7 +21,7 @@
       radial-gradient(600px 400px at -10% 120%, #22d3ee10, transparent 40%),
       linear-gradient(180deg,var(--bg),var(--grad1) 40%,var(--grad2));
     color:var(--txt); font:16px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, sans-serif;
-    display:grid; min-height:100%; grid-template-rows:1fr auto;
+    display:grid; min-height:100vh; grid-template-rows:1fr auto; padding-bottom:28px; box-sizing:border-box;
   }
   .wrap{display:grid; place-items:center; padding:40px 20px;}
   .card{
@@ -74,9 +74,9 @@
   .fc-col ul{list-style:none;margin:0;padding:0;display:grid;gap:6px;}
   .fc-col a{display:inline-flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;text-decoration:none;color:#d2d9e7;background:transparent;border:1px solid transparent;}
   .fc-col a:hover{border-color:#223047;background:#0e1624;}
-  .fc-bottom{border-top:1px solid #1a2231;padding:14px 20px;}
-  .fc-bottom .fc-wrap{padding:0;display:flex;align-items:center;justify-content:space-between;gap:12px;}
-  @media (max-width:640px){.fc-bottom .fc-wrap{flex-direction:column;align-items:flex-start;}}
+  .fc-bottom{border-top:1px solid #1a2231;padding:14px 20px;margin-top:24px;max-width:1160px;
+    margin-inline:auto;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+  @media (max-width:640px){.fc-bottom{flex-direction:column;align-items:flex-start;gap:18px;}}
   .fc-left{display:flex;align-items:center;gap:10px;color:#93a6c6;}
   .fc-left strong{color:#dbe5ff;}
   .fc-right{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
@@ -89,10 +89,10 @@
   <main class="wrap" role="main" aria-label="Access notice">
     <section class="card" aria-live="polite">
       <div class="ring" aria-hidden="true"></div>
-      <h1>Nya~ Access Denied! (｡◕‿◕｡)</h1>
-      <p id="vpn-message">Hey sweetie, looks like you're using <span id="provider-name">a VPN</span>~ Sorry, but that IP tastes really bad, I don't want to get sick! (´｡• ᵕ •｡`) ♡</p>
+      <h1>Nya~ Access Denied! 😼</h1>
+      <p id="vpn-message">Hey sweetie, looks like you're using <span id="provider-name">a VPN</span>~ Sorry, but that IP tastes really bad, I don't want to get sick! 💞</p>
       <p>Please turn off your <span id="provider-name-2">VPN</span> and visit me again~ I promise I'll be nice! ✨</p>
-      <div class="badge" aria-label="policy note"><span class="dot"></span> Server-chan is protecting herself! (◡ ‿ ◡) ♡</div>
+      <div class="badge" aria-label="policy note"><span class="dot"></span> Server-chan is protecting herself! 💖</div>
       <div id="proton-extra" class="proton-extra" hidden>
         <h2>Heehee~ Proton engine spotted!</h2>
         <p>Server: <strong id="proton-server-name">Unknown</strong></p>
@@ -138,13 +138,11 @@
       </nav>
     </div>
     <div class="fc-bottom">
-      <div class="fc-wrap">
-        <div class="fc-left">© <span data-fixcraft-year></span> <strong>FixCraft®</strong> All rights reserved.</div>
-        <div class="fc-right">
-          <a class="fc-btn" href="#" aria-label="Open FixCraft docs">Docs</a>
-          <a class="fc-btn" href="#" aria-label="Contact FixCraft support">Support</a>
-          <a class="fc-btn" href="https://github.com/FixCraft-Inc" aria-label="View FixCraft on GitHub">GitHub</a>
-        </div>
+      <div class="fc-left">© <span data-fixcraft-year></span> <strong>FixCraft®</strong> All rights reserved.</div>
+      <div class="fc-right">
+        <a class="fc-btn" href="#" aria-label="Open FixCraft docs">Docs</a>
+        <a class="fc-btn" href="#" aria-label="Contact FixCraft support">Support</a>
+        <a class="fc-btn" href="https://github.com/FixCraft-Inc" aria-label="View FixCraft on GitHub">GitHub</a>
       </div>
     </div>
   </footer>
@@ -178,7 +176,7 @@
         
         var badge = document.querySelector('.badge');
         if (badge) {
-          badge.innerHTML = '<span class="dot"></span> Detected: ' + label + ' (◡ ‿ ◡) ♡';
+          badge.innerHTML = '<span class="dot"></span> Detected: ' + label + ' 💖';
         }
       }
       
