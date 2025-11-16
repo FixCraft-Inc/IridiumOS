@@ -772,19 +772,29 @@ wireguard_up() {
 	local resolvconf_cmd
 	resolvconf_cmd="$(determine_resolvconf_cmd)"
 	local env_args=(RESOLVCONF="$resolvconf_cmd")
+	local start_ok=0
 	if [[ -n "$userspace" ]]; then
 		log_info "Starting WireGuard (userspace: $userspace)"
 		env_args+=("WG_QUICK_USERSPACE_IMPLEMENTATION=$userspace")
-		if ! ip netns exec "$ns" env "${env_args[@]}" wg-quick up "$resolved" >/dev/null; then
-			handle_wireguard_up_failure "$ns" "$resolved" "$userspace" || true
+		if ip netns exec "$ns" env "${env_args[@]}" wg-quick up "$resolved" >/dev/null; then
+			start_ok=1
+		elif handle_wireguard_up_failure "$ns" "$resolved" "$userspace"; then
+			start_ok=1
+		else
 			return
 		fi
 	else
 		log_info "Starting WireGuard"
-		if ! ip netns exec "$ns" env "${env_args[@]}" wg-quick up "$resolved" >/dev/null; then
-			handle_wireguard_up_failure "$ns" "$resolved" || true
+		if ip netns exec "$ns" env "${env_args[@]}" wg-quick up "$resolved" >/dev/null; then
+			start_ok=1
+		elif handle_wireguard_up_failure "$ns" "$resolved"; then
+			start_ok=1
+		else
 			return
 		fi
+	fi
+	if (( start_ok == 0 )); then
+		return
 	fi
 	apply_wireguard_dns "$ns" "$resolved"
 	wireguard_enable_automoderation "$ns"
@@ -809,7 +819,6 @@ handle_wireguard_up_failure() {
 	fi
 	if ip netns exec "$ns" env "${retry_cmd[@]}" wg-quick up "$resolved" >/dev/null; then
 		log_info "WireGuard started without resolvconf integration."
-		apply_wireguard_dns "$ns" "$resolved"
 		return 0
 	fi
 	log_error "WireGuard failed to start even after resolvconf fallback."
